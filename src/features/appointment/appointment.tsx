@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { CalendarDays, CalendarClock, Clock, Search, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
+import { getWhatsAppUrl } from '../../lib/whatsapp'
 
 type AppointmentStatus =
   | 'Scheduled'
@@ -879,12 +880,15 @@ export function AppointmentsPage() {
                 Cancel
               </button>
               <a
-                href={`https://wa.me/${(patients.find((patient) => patient.id === preponingAppointment.patientId)?.phone || '').replace(/\D/g, '')}?text=${encodeURIComponent(`Joshi Dental Clinic: Would an earlier appointment be convenient for you? Your current booking is ${formatDate(preponingAppointment.date)} at ${preponingAppointment.time}. Please call 7090763509 if you are ready to reschedule. Booking ID: ${preponingAppointment.id}.`)}`}
+                href={getWhatsAppUrl(
+                  patients.find((patient) => patient.id === preponingAppointment.patientId)?.phone || '',
+                  `Joshi Dental Clinic: Would an earlier appointment be convenient for you? Your current booking is ${formatDate(preponingAppointment.date)} at ${preponingAppointment.time}. Please call 7090763509 if you are ready to reschedule. Booking ID: ${preponingAppointment.id}.`,
+                ) || '#'}
                 target="_blank"
                 rel="noreferrer"
                 className="rounded-xl bg-[#25D366] px-4 py-3 text-center text-sm font-semibold text-white hover:bg-[#20bd5a]"
               >
-                Open WhatsApp message
+                Continue in WhatsApp
               </a>
             </div>
           </div>
@@ -928,12 +932,15 @@ export function AppointmentsPage() {
             <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
               {confirmation.patientPhone && (
                 <a
-                  href={`https://wa.me/${confirmation.patientPhone.replace(/\D/g, '')}?text=${encodeURIComponent(`Joshi Dental Clinic: Your appointment is ${confirmation.kind}. Booking ID: ${confirmation.appointment.id}. Date: ${formatDate(confirmation.appointment.date)} at ${confirmation.appointment.time}.`)}`}
+                  href={getWhatsAppUrl(
+                    confirmation.patientPhone,
+                    `Joshi Dental Clinic: Your appointment is ${confirmation.kind}. Booking ID: ${confirmation.appointment.id}. Date: ${formatDate(confirmation.appointment.date)} at ${confirmation.appointment.time}.`,
+                  ) || '#'}
                   target="_blank"
                   rel="noreferrer"
                   className="rounded-xl bg-[#25D366] px-4 py-3 text-center text-sm font-semibold text-white hover:bg-[#20bd5a]"
                 >
-                  Send on WhatsApp
+                  Continue in WhatsApp
                 </a>
               )}
 

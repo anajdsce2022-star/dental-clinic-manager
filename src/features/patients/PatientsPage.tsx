@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
+import { getWhatsAppUrl } from '../../lib/whatsapp'
 
 type Patient = {
   id: string
@@ -60,10 +61,6 @@ function getAge(dateOfBirth: string) {
   }
 
   return age >= 0 ? age : null
-}
-
-function normalizePhone(value: string) {
-  return value.replace(/\D/g, '')
 }
 
 function getToday() {
@@ -215,21 +212,20 @@ export function PatientsPage() {
   }
 
   function getPreponementLink(patient: Patient, appointment: PatientAppointment) {
-    const phone = normalizePhone(patient.phone)
     const message = `Joshi Dental Clinic: Would an earlier appointment be convenient for you? Your current booking is ${formatDate(appointment.date)} at ${appointment.time}. Please call ${PREPONEMENT_NUMBER} if you are ready to reschedule. Booking ID: ${appointment.id}.`
 
-    return `https://wa.me/${phone}?text=${encodeURIComponent(message)}`
+    return getWhatsAppUrl(patient.phone, message)
   }
 
   const filteredPatients = patients.filter((patient) => {
     const query = search.trim().toLowerCase()
-    const phoneQuery = normalizePhone(search)
+    const phoneQuery = search.replace(/\D/g, '')
 
     return (
       patient.name.toLowerCase().includes(query) ||
       patient.email.toLowerCase().includes(query) ||
       (phoneQuery.length > 0 &&
-        normalizePhone(patient.phone).includes(phoneQuery))
+        patient.phone.replace(/\D/g, '').includes(phoneQuery))
     )
   })
 
