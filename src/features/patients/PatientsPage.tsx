@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from 'react'
+import { useState, type FormEvent } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { getWhatsAppUrl } from '../../lib/whatsapp'
 
@@ -43,6 +43,30 @@ const emptyPatient = {
   medicalNotes: '',
 }
 
+function loadPatients(): Patient[] {
+  const saved = localStorage.getItem(STORAGE_KEY)
+
+  if (!saved) return []
+
+  try {
+    return JSON.parse(saved) as Patient[]
+  } catch {
+    return []
+  }
+}
+
+function loadAppointments(): PatientAppointment[] {
+  const savedAppointments = localStorage.getItem(APPOINTMENTS_STORAGE_KEY)
+
+  if (!savedAppointments) return []
+
+  try {
+    return JSON.parse(savedAppointments) as PatientAppointment[]
+  } catch {
+    return []
+  }
+}
+
 function getAge(dateOfBirth: string) {
   if (!dateOfBirth) {
     return null
@@ -77,35 +101,13 @@ function formatDate(date: string) {
 
 export function PatientsPage() {
   const navigate = useNavigate()
-  const [patients, setPatients] = useState<Patient[]>([])
-  const [appointments, setAppointments] = useState<PatientAppointment[]>([])
+  const [patients, setPatients] = useState<Patient[]>(loadPatients)
+  const [appointments] = useState<PatientAppointment[]>(loadAppointments)
   const [search, setSearch] = useState('')
   const [showForm, setShowForm] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [form, setForm] = useState(emptyPatient)
   const [formError, setFormError] = useState('')
-
-  useEffect(() => {
-    const saved = localStorage.getItem(STORAGE_KEY)
-
-    if (saved) {
-      try {
-        setPatients(JSON.parse(saved))
-      } catch {
-        setPatients([])
-      }
-    }
-
-    const savedAppointments = localStorage.getItem(APPOINTMENTS_STORAGE_KEY)
-
-    if (savedAppointments) {
-      try {
-        setAppointments(JSON.parse(savedAppointments))
-      } catch {
-        setAppointments([])
-      }
-    }
-  }, [])
 
   function savePatients(nextPatients: Patient[]) {
     setPatients(nextPatients)

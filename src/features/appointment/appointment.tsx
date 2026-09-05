@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useMemo, useState } from 'react'
 import { CalendarDays, CalendarClock, Clock, Search, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
 import { getWhatsAppUrl } from '../../lib/whatsapp'
@@ -80,17 +80,69 @@ function getToday() {
   return new Date().toISOString().split('T')[0]
 }
 
+function occupiesTimeSlot(status: AppointmentStatus) {
+  return status !== 'Cancelled' && status !== 'No show'
+}
+
+function loadPatients() {
+  const savedPatients = localStorage.getItem(PATIENTS_STORAGE_KEY)
+
+  if (!savedPatients) return []
+
+  try {
+    return JSON.parse(savedPatients) as Patient[]
+  } catch {
+    return []
+  }
+}
+
+function loadAppointments() {
+  const savedAppointments = localStorage.getItem(APPOINTMENTS_STORAGE_KEY)
+
+  if (!savedAppointments) return []
+
+  try {
+    return JSON.parse(savedAppointments) as Appointment[]
+  } catch {
+    return []
+  }
+}
+
 export function AppointmentsPage() {
-  const [patients, setPatients] = useState<Patient[]>([])
-  const [appointments, setAppointments] = useState<Appointment[]>([])
-  const [patientSearch, setPatientSearch] = useState('')
+  const [searchParams] = useSearchParams()
+  const [patients] = useState<Patient[]>(loadPatients)
+  const [appointments, setAppointments] = useState<Appointment[]>(loadAppointments)
+  const [patientSearch, setPatientSearch] = useState(() => {
+    const patientId = searchParams.get('patientId')
+    const linkedPatient = loadPatients().find((patient) => patient.id === patientId)
+
+    return linkedPatient ? `${linkedPatient.name} — ${linkedPatient.phone}` : ''
+  })
   const [appointmentSearch, setAppointmentSearch] = useState('')
   const [appointmentScope, setAppointmentScope] = useState<AppointmentScope>('day')
-  const [selectedDate, setSelectedDate] = useState(getToday())
-  const [showForm, setShowForm] = useState(false)
+  const [selectedDate, setSelectedDate] = useState(() => {
+    const appointmentId = searchParams.get('appointmentId')
+    const linkedAppointment = loadAppointments().find(
+      (appointment) => appointment.id === appointmentId,
+    )
+
+    return linkedAppointment?.date || getToday()
+  })
+  const [showForm, setShowForm] = useState(() => {
+    const patientId = searchParams.get('patientId')
+    return loadPatients().some((patient) => patient.id === patientId)
+  })
   const [editingId, setEditingId] = useState<string | null>(null)
   const [formError, setFormError] = useState('')
-  const [form, setForm] = useState(emptyAppointment)
+  const [form, setForm] = useState(() => ({
+    ...emptyAppointment,
+    patientId: (() => {
+      const patientId = searchParams.get('patientId')
+      return loadPatients().some((patient) => patient.id === patientId)
+        ? patientId || ''
+        : ''
+    })(),
+  }))
   const [pendingStatus, setPendingStatus] = useState<{
     appointmentId: string
     status: AppointmentStatus
@@ -104,54 +156,6 @@ export function AppointmentsPage() {
     kind: 'booked' | 'completed'
   } | null>(null)
   const [preponingAppointment, setPreponingAppointment] = useState<Appointment | null>(null)
-  const [searchParams] = useSearchParams()
-
-  useEffect(() => {
-    const savedPatients = localStorage.getItem(PATIENTS_STORAGE_KEY)
-    const savedAppointments = localStorage.getItem(APPOINTMENTS_STORAGE_KEY)
-
-    if (savedPatients) {
-      try {
-        const savedPatientList = JSON.parse(savedPatients) as Patient[]
-        setPatients(savedPatientList)
-
-        const patientId = searchParams.get('patientId')
-        const linkedPatient = savedPatientList.find(
-          (patient) => patient.id === patientId,
-        )
-
-        if (linkedPatient) {
-          setForm((currentForm) => ({
-            ...currentForm,
-            patientId: linkedPatient.id,
-          }))
-          setPatientSearch(`${linkedPatient.name} — ${linkedPatient.phone}`)
-          setShowForm(true)
-        }
-      } catch {
-        setPatients([])
-      }
-    }
-
-    if (savedAppointments) {
-      try {
-        const savedAppointmentList = JSON.parse(savedAppointments) as Appointment[]
-        setAppointments(savedAppointmentList)
-
-        const appointmentId = searchParams.get('appointmentId')
-        const linkedAppointment = savedAppointmentList.find(
-          (appointment) => appointment.id === appointmentId,
-        )
-
-        if (linkedAppointment) {
-          setSelectedDate(linkedAppointment.date)
-          setAppointmentScope('day')
-        }
-      } catch {
-        setAppointments([])
-      }
-    }
-  }, [searchParams])
 
   const saveAppointments = (updatedAppointments: Appointment[]) => {
     setAppointments(updatedAppointments)
@@ -184,7 +188,7 @@ export function AppointmentsPage() {
     return patients.filter((patient) =>
       `${patient.name} ${patient.phone}`.toLowerCase().includes(query),
     )
-  }, [patients, patientSearch])
+  }, [form.patientId, patients, patientSearch])
 
   const startAddAppointment = () => {
     setEditingId(null)
@@ -246,6 +250,19 @@ export function AppointmentsPage() {
 
     if (!form.reason.trim()) {
       setFormError('Please enter the reason for the appointment.')
+      return
+    }
+
+    const timeSlotOccupied = appointments.some(
+      (appointment) =>
+        appointment.id !== editingId &&
+        occupiesTimeSlot(appointment.status) &&
+        appointment.date === form.date &&
+        appointment.time === form.time,
+    )
+
+    if (timeSlotOccupied) {
+      setFormError('This time slot is already occupied. Please choose another time.')
       return
     }
 
@@ -362,6 +379,21 @@ export function AppointmentsPage() {
     ) {
       setStatusError('Choose both a rescheduled date and time, or leave both blank.')
       return
+    }
+
+    if (occupiesTimeSlot(pendingStatus.status)) {
+      const timeSlotOccupied = appointments.some(
+        (currentAppointment) =>
+          currentAppointment.id !== appointment.id &&
+          occupiesTimeSlot(currentAppointment.status) &&
+          currentAppointment.date === appointment.date &&
+          currentAppointment.time === appointment.time,
+      )
+
+      if (timeSlotOccupied) {
+        setStatusError('This time slot is already occupied. Please choose another time.')
+        return
+      }
     }
 
     saveAppointments(
