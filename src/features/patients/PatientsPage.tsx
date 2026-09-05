@@ -341,6 +341,13 @@ export function PatientsPage() {
                     </td>
 
                     <td className="px-3 py-4 text-right">
+                      <button
+                        onClick={() => navigate(`/appointments?patientId=${patient.id}`)}
+                        className="mr-3 text-sm font-medium text-clinic-teal hover:underline"
+                      >
+                        Book Appointment
+                      </button>
+
                       {appointment ? (
                         <>
                           <button
@@ -361,14 +368,7 @@ export function PatientsPage() {
                             </a>
                           )}
                         </>
-                      ) : (
-                        <button
-                          onClick={() => navigate(`/appointments?patientId=${patient.id}`)}
-                          className="mr-3 text-sm font-medium text-clinic-teal hover:underline"
-                        >
-                          Book appointment
-                        </button>
-                      )}
+                      ) : null}
 
                       <button
                         onClick={() => startEditPatient(patient)}
