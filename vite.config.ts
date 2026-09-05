@@ -5,4 +5,4 @@ import tailwindcss from '@tailwindcss/vite'
 export default defineConfig({
   base: '/dental-clinic-manager/',
   plugins: [react(), tailwindcss()],
-})npm.cmd run build
+})
