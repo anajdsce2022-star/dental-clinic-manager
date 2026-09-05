@@ -56,6 +56,7 @@ function App() {
 
       <main className="lg:pl-64">
         <Header />
+        <MobileNavigation />
 
         <div className="mx-auto max-w-7xl px-5 py-8 md:px-8">
           <Routes>
@@ -189,6 +190,23 @@ function Header() {
   )
 }
 
+function MobileNavigation() {
+  return (
+    <nav
+      aria-label="Mobile navigation"
+      className="flex gap-2 overflow-x-auto border-b border-clinic-line bg-white px-5 py-3 lg:hidden"
+    >
+      <NavigationItem to="/dashboard" label="Dashboard" />
+      <NavigationItem to="/patients" label="Patients" />
+      <NavigationItem to="/appointments" label="Appointments" />
+      <NavigationItem to="/treatments" label="Treatments" />
+      <NavigationItem to="/billing" label="Billing" />
+      <NavigationItem to="/inventory" label="Inventory" />
+      <NavigationItem to="/reports" label="Reports" />
+    </nav>
+  )
+}
+
 function NavigationItem({
   to,
   label,
@@ -200,7 +218,7 @@ function NavigationItem({
     <NavLink
       to={to}
       className={({ isActive }) =>
-        `block rounded-xl px-4 py-3 text-sm font-medium transition ${
+        `block shrink-0 whitespace-nowrap rounded-xl px-4 py-3 text-sm font-medium transition ${
           isActive
             ? 'bg-[#0B5148] !text-white'
             : 'text-clinic-ink/60 hover:bg-clinic-paper hover:text-clinic-ink'
