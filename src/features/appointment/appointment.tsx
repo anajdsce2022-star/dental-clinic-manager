@@ -1,3 +1,4 @@
+import { useEffect } from 'react'
 import { useMemo, useState } from 'react'
 import { CalendarDays, CalendarClock, Clock, Search, X } from 'lucide-react'
 import { useSearchParams } from 'react-router-dom'
@@ -40,9 +41,48 @@ type Patient = {
 const PATIENTS_STORAGE_KEY = 'joshi-dental-clinic-patients'
 const APPOINTMENTS_STORAGE_KEY = 'joshi-dental-clinic-appointments'
 
+function getLocalDateString() {
+  const today = new Date()
+  const year = today.getFullYear()
+  const month = (today.getMonth() + 1).toString().padStart(2, '0')
+  const day = today.getDate().toString().padStart(2, '0')
+
+  return `${year}-${month}-${day}`
+}
+
+function isAppointmentStatus(value: unknown): value is AppointmentStatus {
+  return typeof value === 'string' && appointmentStatuses.includes(value as AppointmentStatus)
+}
+
+function isValidDateString(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+
+  const [year, month, day] = value.split('-').map(Number)
+  const date = new Date(year, month - 1, day)
+
+  return (
+    date.getFullYear() === year &&
+    date.getMonth() === month - 1 &&
+    date.getDate() === day
+  )
+}
+
+function isValidTimeString(value: unknown): value is string {
+  return typeof value === 'string' && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)
+}
+
+function isSafeInteger(value: unknown, minimum: number, maximum: number): value is number {
+  return (
+    typeof value === 'number' &&
+    Number.isSafeInteger(value) &&
+    value >= minimum &&
+    value <= maximum
+  )
+}
+
 const emptyAppointment = {
   patientId: '',
-  date: new Date().toISOString().split('T')[0],
+  date: getLocalDateString(),
   time: '09:00',
   reason: '',
   status: 'Scheduled' as AppointmentStatus,
@@ -68,6 +108,18 @@ const appointmentStatuses: AppointmentStatus[] = [
   'No show',
 ]
 
+const clinicSchedule = {
+  slotIntervalMinutes: 30,
+  morning: { start: 10 * 60, end: 15 * 60 },
+  evening: { start: 17 * 60, end: 22 * 60 },
+}
+
+type AppointmentSlot = {
+  value: string
+  label: string
+  available: boolean
+}
+
 function formatDate(date: string) {
   return new Date(`${date}T00:00:00`).toLocaleDateString('en-IN', {
     day: '2-digit',
@@ -77,32 +129,283 @@ function formatDate(date: string) {
 }
 
 function getToday() {
-  return new Date().toISOString().split('T')[0]
+  return getLocalDateString()
+}
+
+function isSunday(date: string) {
+  return new Date(`${date}T00:00:00`).getDay() === 0
+}
+
+function formatTimeLabel(minutes: number) {
+  const hour = Math.floor(minutes / 60)
+  const minute = minutes % 60
+  const period = hour >= 12 ? 'PM' : 'AM'
+  const displayHour = hour % 12 || 12
+
+  return `${displayHour}:${minute.toString().padStart(2, '0')} ${period}`
+}
+
+function getTimeValue(minutes: number) {
+  return `${Math.floor(minutes / 60).toString().padStart(2, '0')}:${(minutes % 60)
+    .toString()
+    .padStart(2, '0')}`
+}
+
+function getScheduleSlots(start: number, end: number): Omit<AppointmentSlot, 'available'>[] {
+  const slots: Omit<AppointmentSlot, 'available'>[] = []
+
+  for (
+    let minutes = start;
+    minutes < end;
+    minutes += clinicSchedule.slotIntervalMinutes
+  ) {
+    slots.push({
+      value: getTimeValue(minutes),
+      label: formatTimeLabel(minutes),
+    })
+  }
+
+  return slots
+}
+
+function getDaySlots(
+  date: string,
+  appointments: Appointment[],
+  editingId: string | null,
+) {
+  if (isSunday(date)) return []
+
+  if (!editingId && date < getToday()) return []
+
+  const editingAppointment = editingId
+    ? appointments.find((appointment) => appointment.id === editingId)
+    : null
+  const ownSlotValue =
+    editingAppointment && editingAppointment.date === date
+      ? editingAppointment.time
+      : null
+
+  const occupiedTimes = new Set(
+    appointments
+      .filter(
+        (appointment) =>
+          appointment.id !== editingId &&
+          appointment.date === date &&
+          occupiesTimeSlot(appointment.status),
+      )
+      .map((appointment) => appointment.time),
+  )
+
+  // A rescheduled appointment must also reserve its new slot.
+  appointments.forEach((appointment) => {
+    if (appointment.id === editingId) return
+    if (appointment.rescheduleDate !== date || !appointment.rescheduleTime) return
+    occupiedTimes.add(appointment.rescheduleTime)
+  })
+
+  const isToday = date === getToday()
+  const nowMinutes = isToday
+    ? new Date().getHours() * 60 + new Date().getMinutes()
+    : -1
+
+  return [
+    ...getScheduleSlots(clinicSchedule.morning.start, clinicSchedule.morning.end),
+    ...getScheduleSlots(clinicSchedule.evening.start, clinicSchedule.evening.end),
+  ].map((slot) => {
+    if (slot.value === ownSlotValue) {
+      return { ...slot, available: true }
+    }
+
+    const [hour, minute] = slot.value.split(':').map(Number)
+    const isPastTime = isToday && hour * 60 + minute <= nowMinutes
+
+    return {
+      ...slot,
+      available: !isPastTime && !occupiedTimes.has(slot.value),
+    }
+  })
+}
+
+function SlotGroup({
+  label,
+  slots,
+  selectedTime,
+  onSelect,
+}: {
+  label: string
+  slots: AppointmentSlot[]
+  selectedTime: string
+  onSelect: (time: string) => void
+}) {
+  return (
+    <div>
+      <p className="mb-2 text-xs font-semibold uppercase tracking-wider text-clinic-ink/45">
+        {label}
+      </p>
+      {slots.length > 0 ? (
+        <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+          {slots.map((slot) => (
+            <button
+              key={slot.value}
+              type="button"
+              disabled={!slot.available}
+              aria-disabled={!slot.available}
+              aria-label={slot.available ? slot.label : `${slot.label}, already unavailable`}
+              onClick={() => {
+                if (slot.available) onSelect(slot.value)
+              }}
+              className={`rounded-xl border px-3 py-3 text-sm font-semibold transition ${
+                selectedTime === slot.value
+                  ? 'border-clinic-teal bg-clinic-teal text-white shadow-sm'
+                  : slot.available
+                    ? 'border-clinic-line bg-white text-clinic-teal hover:border-clinic-teal/50 hover:bg-clinic-paper'
+                    : 'cursor-not-allowed border-clinic-line bg-clinic-paper text-clinic-ink/30 line-through'
+              }`}
+            >
+              {slot.label}
+            </button>
+          ))}
+        </div>
+      ) : (
+        <p className="rounded-xl border border-dashed border-clinic-line bg-white px-3 py-3 text-sm text-clinic-ink/45">
+          No slots available
+        </p>
+      )}
+    </div>
+  )
 }
 
 function occupiesTimeSlot(status: AppointmentStatus) {
   return status !== 'Cancelled' && status !== 'No show'
 }
 
-function loadPatients() {
+function loadPatients(): Patient[] {
   const savedPatients = localStorage.getItem(PATIENTS_STORAGE_KEY)
 
   if (!savedPatients) return []
 
   try {
-    return JSON.parse(savedPatients) as Patient[]
+    const parsed: unknown = JSON.parse(savedPatients)
+    if (!Array.isArray(parsed)) return []
+
+    const seenIds = new Set<string>()
+
+    return parsed.filter((value): value is Patient => {
+      if (!value || typeof value !== 'object') return false
+
+      const patient = value as Record<string, unknown>
+      const id = patient.id
+      const name = patient.name
+      const phone = patient.phone
+
+      if (
+        typeof id !== 'string' ||
+        !id.trim() ||
+        typeof name !== 'string' ||
+        !name.trim() ||
+        typeof phone !== 'string' ||
+        !phone.trim() ||
+        seenIds.has(id)
+      ) {
+        return false
+      }
+
+      seenIds.add(id)
+      return true
+    })
   } catch {
     return []
   }
 }
 
-function loadAppointments() {
+function loadAppointments(): Appointment[] {
   const savedAppointments = localStorage.getItem(APPOINTMENTS_STORAGE_KEY)
 
   if (!savedAppointments) return []
 
   try {
-    return JSON.parse(savedAppointments) as Appointment[]
+    const parsed: unknown = JSON.parse(savedAppointments)
+    if (!Array.isArray(parsed)) return []
+
+    const seenIds = new Set<string>()
+
+    return parsed.filter((value): value is Appointment => {
+      if (!value || typeof value !== 'object') return false
+
+      const appointment = value as Record<string, unknown>
+      const id = appointment.id
+      const patientId = appointment.patientId
+      const patientName = appointment.patientName
+      const date = appointment.date
+      const time = appointment.time
+      const reason = appointment.reason
+      const notes = appointment.notes
+      const requiredVisits = appointment.requiredVisits ?? '1'
+
+      if (
+        typeof id !== 'string' ||
+        !id.trim() ||
+        seenIds.has(id) ||
+        typeof patientId !== 'string' ||
+        !patientId.trim() ||
+        typeof patientName !== 'string' ||
+        !patientName.trim() ||
+        !isValidDateString(date) ||
+        !isValidTimeString(time) ||
+        typeof reason !== 'string' ||
+        !reason.trim() ||
+        !isAppointmentStatus(appointment.status) ||
+        typeof notes !== 'string' ||
+        typeof requiredVisits !== 'string' ||
+        !/^\d+$/.test(requiredVisits) ||
+        !isSafeInteger(Number(requiredVisits), 1, 50)
+      ) {
+        return false
+      }
+
+      const optionalStringFields = [
+        'disease',
+        'plannedTreatments',
+        'actionReason',
+        'treatmentDetails',
+        'revisitDate',
+        'rescheduleDate',
+        'rescheduleTime',
+      ] as const
+
+      for (const field of optionalStringFields) {
+        if (appointment[field] !== undefined && typeof appointment[field] !== 'string') {
+          return false
+        }
+      }
+
+      if (
+        appointment.revisitDate !== undefined &&
+        appointment.revisitDate !== '' &&
+        !isValidDateString(appointment.revisitDate)
+      ) {
+        return false
+      }
+
+      if (
+        appointment.rescheduleDate !== undefined &&
+        appointment.rescheduleDate !== '' &&
+        !isValidDateString(appointment.rescheduleDate)
+      ) {
+        return false
+      }
+
+      if (
+        appointment.rescheduleTime !== undefined &&
+        appointment.rescheduleTime !== '' &&
+        !isValidTimeString(appointment.rescheduleTime)
+      ) {
+        return false
+      }
+
+      seenIds.add(id)
+      return true
+    })
   } catch {
     return []
   }
@@ -156,6 +459,17 @@ export function AppointmentsPage() {
     kind: 'booked' | 'completed'
   } | null>(null)
   const [preponingAppointment, setPreponingAppointment] = useState<Appointment | null>(null)
+  const [highlightedAppointmentId, setHighlightedAppointmentId] = useState<string | null>(
+    () => searchParams.get('appointmentId'),
+  )
+
+  const selectedDateIsSunday = isSunday(form.date)
+  const daySlots = useMemo(
+    () => getDaySlots(form.date, appointments, editingId),
+    [appointments, editingId, form.date],
+  )
+  const availableMorningSlots = daySlots.filter((slot) => slot.value < '15:00')
+  const availableEveningSlots = daySlots.filter((slot) => slot.value >= '17:00')
 
   const saveAppointments = (updatedAppointments: Appointment[]) => {
     setAppointments(updatedAppointments)
@@ -180,6 +494,21 @@ export function AppointmentsPage() {
       .sort((a, b) => a.time.localeCompare(b.time))
   }, [appointmentSearch, appointmentScope, appointments, selectedDate])
 
+  useEffect(() => {
+    if (!highlightedAppointmentId) return
+
+    const rows = document.querySelectorAll<HTMLElement>(
+      `[data-appointment-id="${highlightedAppointmentId}"]`,
+    )
+    const visibleRow =
+      Array.from(rows).find((row) => row.offsetParent !== null) ?? rows[0]
+
+    visibleRow?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+
+    const fadeTimeout = setTimeout(() => setHighlightedAppointmentId(null), 4000)
+    return () => clearTimeout(fadeTimeout)
+  }, [highlightedAppointmentId, visibleAppointments])
+
   const filteredPatients = useMemo(() => {
     const query = patientSearch.trim().toLowerCase()
 
@@ -191,14 +520,28 @@ export function AppointmentsPage() {
   }, [form.patientId, patients, patientSearch])
 
   const startAddAppointment = () => {
+    const date = selectedDate
+    const slots = getDaySlots(date, appointments, null).filter((slot) => slot.available)
+
     setEditingId(null)
     setPatientSearch('')
     setForm({
       ...emptyAppointment,
-      date: selectedDate,
+      date,
+      time: slots[0]?.value || '',
     })
     setFormError('')
     setShowForm(true)
+  }
+
+  const handleAppointmentDateChange = (date: string) => {
+    const slots = getDaySlots(date, appointments, editingId).filter((slot) => slot.available)
+
+    setForm({
+      ...form,
+      date,
+      time: isSunday(date) ? '' : slots[0]?.value || '',
+    })
   }
 
   const startEditAppointment = (appointment: Appointment) => {
@@ -243,13 +586,76 @@ export function AppointmentsPage() {
       return
     }
 
+    if (!isValidDateString(form.date)) {
+      setFormError('Please select a valid appointment date.')
+      return
+    }
+
     if (!form.time) {
       setFormError('Please select an appointment time.')
       return
     }
 
+    if (!isValidTimeString(form.time)) {
+      setFormError('Please select a valid appointment time.')
+      return
+    }
+
+    const existingAppointment = editingId
+      ? appointments.find((currentAppointment) => currentAppointment.id === editingId)
+      : null
+
+    if (form.date < getToday() && (!existingAppointment || form.date !== existingAppointment.date)) {
+      setFormError('Appointments cannot be moved to a past date.')
+      return
+    }
+
     if (!form.reason.trim()) {
-      setFormError('Please enter the reason for the appointment.')
+      setFormError(
+        selectedDateIsSunday
+          ? 'Please enter the urgency reason.'
+          : 'Please enter the reason for the appointment.',
+      )
+      return
+    }
+
+    if (form.reason.trim().length > 500) {
+      setFormError('Reason for visit must be 500 characters or fewer.')
+      return
+    }
+
+    if (form.disease.trim().length > 500) {
+      setFormError('Main dental concern must be 500 characters or fewer.')
+      return
+    }
+
+    if (form.plannedTreatments.trim().length > 2000) {
+      setFormError('Planned treatments must be 2000 characters or fewer.')
+      return
+    }
+
+    if (form.notes.trim().length > 5000) {
+      setFormError('Notes must be 5000 characters or fewer.')
+      return
+    }
+
+    if (!/^\d+$/.test(form.requiredVisits)) {
+      setFormError('Expected visits must be a whole number between 1 and 50.')
+      return
+    }
+
+    const requiredVisits = Number(form.requiredVisits)
+
+    if (requiredVisits < 1 || requiredVisits > 50) {
+      setFormError('Expected visits must be a whole number between 1 and 50.')
+      return
+    }
+
+    if (
+      !selectedDateIsSunday &&
+      !daySlots.some((slot) => slot.value === form.time && slot.available)
+    ) {
+      setFormError('Please choose an available appointment slot.')
       return
     }
 
@@ -285,13 +691,9 @@ export function AppointmentsPage() {
       status: form.status,
       notes: form.notes.trim(),
       disease: form.disease.trim(),
-      requiredVisits: form.requiredVisits,
+      requiredVisits: String(requiredVisits),
       plannedTreatments: form.plannedTreatments.trim(),
     }
-
-    const existingAppointment = editingId
-      ? appointments.find((currentAppointment) => currentAppointment.id === editingId)
-      : null
 
     if (existingAppointment && existingAppointment.status !== form.status) {
       setFormError('Change the appointment status from the schedule action menu so the action can be confirmed and documented.')
@@ -353,6 +755,11 @@ export function AppointmentsPage() {
 
     if (!appointment) return
 
+    if (!isAppointmentStatus(pendingStatus.status)) {
+      setStatusError('Invalid appointment status.')
+      return
+    }
+
     if (
       pendingStatus.status !== 'Under treatment' &&
       !statusAction.reason.trim()
@@ -370,6 +777,24 @@ export function AppointmentsPage() {
       return
     }
 
+    if (statusAction.reason.trim().length > 1000) {
+      setStatusError('The action reason must be 1000 characters or fewer.')
+      return
+    }
+
+    if (statusAction.treatmentDetails.trim().length > 5000) {
+      setStatusError('Treatment details must be 5000 characters or fewer.')
+      return
+    }
+
+    if (
+      statusAction.revisitDate &&
+      !isValidDateString(statusAction.revisitDate)
+    ) {
+      setStatusError('Please choose a valid revisit date.')
+      return
+    }
+
     const requiresReschedule =
       pendingStatus.status === 'Cancelled' || pendingStatus.status === 'No show'
 
@@ -378,6 +803,47 @@ export function AppointmentsPage() {
       Boolean(statusAction.rescheduleDate) !== Boolean(statusAction.rescheduleTime)
     ) {
       setStatusError('Choose both a rescheduled date and time, or leave both blank.')
+      return
+    }
+
+    if (statusAction.rescheduleDate && !isValidDateString(statusAction.rescheduleDate)) {
+      setStatusError('Please choose a valid rescheduled date.')
+      return
+    }
+
+    if (statusAction.rescheduleTime && !isValidTimeString(statusAction.rescheduleTime)) {
+      setStatusError('Please choose a valid rescheduled time.')
+      return
+    }
+
+    if (statusAction.rescheduleDate && statusAction.rescheduleDate < getToday()) {
+      setStatusError('A rescheduled appointment cannot be placed in the past.')
+      return
+    }
+
+    if (statusAction.rescheduleDate && statusAction.rescheduleDate === getToday()) {
+      const [hour, minute] = statusAction.rescheduleTime.split(':').map(Number)
+      const nowMinutes = new Date().getHours() * 60 + new Date().getMinutes()
+
+      if (hour * 60 + minute <= nowMinutes) {
+        setStatusError('A rescheduled appointment must use a future time today.')
+        return
+      }
+    }
+
+    if (statusAction.rescheduleDate && isSunday(statusAction.rescheduleDate)) {
+      setStatusError('Regular rescheduled appointments cannot be placed on Sunday.')
+      return
+    }
+
+    if (
+      statusAction.rescheduleDate &&
+      !isSunday(statusAction.rescheduleDate) &&
+      (!getDaySlots(statusAction.rescheduleDate, appointments, appointment.id).some(
+        (slot) => slot.value === statusAction.rescheduleTime && slot.available,
+      ))
+    ) {
+      setStatusError('Please choose an available rescheduled appointment slot.')
       return
     }
 
@@ -396,21 +862,43 @@ export function AppointmentsPage() {
       }
     }
 
-    saveAppointments(
-      appointments.map((currentAppointment) =>
+    const updatedAppointment = {
+      ...appointment,
+      status: pendingStatus.status,
+      actionReason: statusAction.reason.trim(),
+      treatmentDetails: statusAction.treatmentDetails.trim(),
+      revisitDate: statusAction.revisitDate,
+      rescheduleDate: statusAction.rescheduleDate,
+      rescheduleTime: statusAction.rescheduleTime,
+    }
+
+    const rescheduledAppointment =
+      requiresReschedule &&
+      statusAction.rescheduleDate &&
+      statusAction.rescheduleTime
+        ? {
+            id: crypto.randomUUID(),
+            patientId: appointment.patientId,
+            patientName: appointment.patientName,
+            date: statusAction.rescheduleDate,
+            time: statusAction.rescheduleTime,
+            reason: appointment.reason,
+            status: 'Scheduled' as AppointmentStatus,
+            notes: appointment.notes,
+            disease: appointment.disease,
+            requiredVisits: appointment.requiredVisits,
+            plannedTreatments: appointment.plannedTreatments,
+          }
+        : null
+
+    saveAppointments([
+      ...appointments.map((currentAppointment) =>
         currentAppointment.id === appointment.id
-          ? {
-              ...currentAppointment,
-              status: pendingStatus.status,
-              actionReason: statusAction.reason.trim(),
-              treatmentDetails: statusAction.treatmentDetails.trim(),
-              revisitDate: statusAction.revisitDate,
-              rescheduleDate: statusAction.rescheduleDate,
-              rescheduleTime: statusAction.rescheduleTime,
-            }
+          ? updatedAppointment
           : currentAppointment,
       ),
-    )
+      ...(rescheduledAppointment ? [rescheduledAppointment] : []),
+    ])
     closeStatusAction()
 
     if (pendingStatus.status === 'Completed') {
@@ -617,7 +1105,12 @@ export function AppointmentsPage() {
                   {visibleAppointments.map((appointment) => (
                     <tr
                       key={appointment.id}
-                      className="border-b border-clinic-line last:border-0"
+                      data-appointment-id={appointment.id}
+                      className={`border-b border-clinic-line last:border-0 transition-colors ${
+                        highlightedAppointmentId === appointment.id
+                          ? 'bg-amber-50 ring-2 ring-inset ring-clinic-clay/40'
+                          : ''
+                      }`}
                     >
                       <td className="whitespace-nowrap px-5 py-4 text-sm font-semibold text-clinic-teal">
                         {appointment.time}
@@ -753,7 +1246,15 @@ export function AppointmentsPage() {
 
             <div className="divide-y divide-clinic-line md:hidden">
               {visibleAppointments.map((appointment) => (
-                <div key={appointment.id} className="p-4">
+                <div
+                  key={appointment.id}
+                  data-appointment-id={appointment.id}
+                  className={`p-4 transition-colors ${
+                    highlightedAppointmentId === appointment.id
+                      ? 'bg-amber-50 ring-2 ring-inset ring-clinic-clay/40'
+                      : ''
+                  }`}
+                >
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-lg font-semibold text-clinic-teal">
@@ -1088,6 +1589,7 @@ export function AppointmentsPage() {
                     <input
                       id="revisit-date"
                       type="date"
+                      min={getToday()}
                       value={statusAction.revisitDate}
                       onChange={(event) =>
                         setStatusAction({ ...statusAction, revisitDate: event.target.value })
@@ -1112,6 +1614,7 @@ export function AppointmentsPage() {
                     <input
                       aria-label="Rescheduled date"
                       type="date"
+                      min={getToday()}
                       value={statusAction.rescheduleDate}
                       onChange={(event) =>
                         setStatusAction({ ...statusAction, rescheduleDate: event.target.value })
@@ -1265,7 +1768,7 @@ export function AppointmentsPage() {
                 )}
               </div>
 
-              <div className="grid gap-5 sm:grid-cols-2">
+              <div className="rounded-2xl border border-clinic-line bg-clinic-paper/60 p-4">
                 <div>
                   <label
                     htmlFor="appointment-form-date"
@@ -1285,56 +1788,110 @@ export function AppointmentsPage() {
                       type="date"
                       min={editingId ? undefined : getToday()}
                       value={form.date}
-                      onChange={(event) =>
-                        setForm({ ...form, date: event.target.value })
-                      }
+                      onChange={(event) => handleAppointmentDateChange(event.target.value)}
                       className="w-full rounded-xl border-2 border-clinic-teal/20 bg-clinic-paper py-3 pl-11 pr-3 text-sm font-medium text-clinic-ink outline-none focus:border-clinic-teal focus:ring-4 focus:ring-clinic-teal/10"
                     />
                   </div>
 
                   <p className="mt-1.5 text-xs text-clinic-ink/45">
-                    Choose the day of the visit
+                    Step 1: choose the day of the visit
                   </p>
                 </div>
 
-                <div>
-                  <label
-                    htmlFor="appointment-form-time"
-                    className="mb-1.5 block text-sm font-semibold text-clinic-ink"
-                  >
-                    Time <span className="text-clinic-clay">*</span>
-                  </label>
-
-                  <div className="relative">
-                    <Clock
-                      aria-hidden="true"
-                      className="pointer-events-none absolute left-3 top-1/2 h-5 w-5 -translate-y-1/2 text-clinic-teal"
-                    />
-
-                    <input
-                      id="appointment-form-time"
-                      type="time"
-                      step="900"
-                      value={form.time}
-                      onChange={(event) =>
-                        setForm({ ...form, time: event.target.value })
-                      }
-                      className="w-full rounded-xl border-2 border-clinic-teal/20 bg-clinic-paper py-3 pl-11 pr-3 text-sm font-medium text-clinic-ink outline-none focus:border-clinic-teal focus:ring-4 focus:ring-clinic-teal/10"
-                    />
+                <div className="mt-5 border-t border-clinic-line pt-5">
+                  <div className="flex items-center justify-between gap-3">
+                    <div>
+                      <p className="text-sm font-semibold text-clinic-ink">
+                        Step 2: choose an appointment time
+                      </p>
+                      <p className="mt-1 text-xs text-clinic-ink/45">
+                        {selectedDateIsSunday
+                          ? 'Sunday appointments use flexible urgent-care timing.'
+                          : 'Available 30-minute slots are shown below.'}
+                      </p>
+                    </div>
+                    <Clock aria-hidden="true" className="h-5 w-5 text-clinic-teal" />
                   </div>
 
-                  <p className="mt-1.5 text-xs text-clinic-ink/45">
-                    Select a time in 15-minute intervals
-                  </p>
+                  {selectedDateIsSunday ? (
+                    <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
+                      <p className="text-sm font-semibold text-amber-900">
+                        Urgent care only
+                      </p>
+                      <p className="mt-1 text-xs text-amber-800">
+                        Regular appointments are unavailable on Sunday. For urgent dental treatment, a flexible time can be arranged.
+                      </p>
+
+                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label
+                            htmlFor="appointment-form-time"
+                            className="mb-1.5 block text-sm font-semibold text-amber-900"
+                          >
+                            Approximate time <span className="text-clinic-clay">*</span>
+                          </label>
+                          <input
+                            id="appointment-form-time"
+                            type="time"
+                            value={form.time}
+                            onChange={(event) =>
+                              setForm({ ...form, time: event.target.value })
+                            }
+                            className="w-full rounded-xl border border-amber-300 bg-white px-3 py-3 text-sm outline-none focus:border-clinic-teal focus:ring-4 focus:ring-clinic-teal/10"
+                          />
+                        </div>
+                        <div>
+                          <label
+                            htmlFor="appointment-urgent-reason"
+                            className="mb-1.5 block text-sm font-semibold text-amber-900"
+                          >
+                            Urgency reason <span className="text-clinic-clay">*</span>
+                          </label>
+                          <input
+                            id="appointment-urgent-reason"
+                            type="text"
+                            value={form.reason}
+                            onChange={(event) =>
+                              setForm({ ...form, reason: event.target.value })
+                            }
+                            placeholder="e.g. Severe tooth pain or swelling"
+                            className="w-full rounded-xl border border-amber-300 bg-white px-3 py-3 text-sm text-amber-900 outline-none placeholder:text-amber-700/50 focus:border-clinic-teal focus:ring-4 focus:ring-clinic-teal/10"
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="mt-4 space-y-4">
+                      <SlotGroup
+                        label="Morning · 10:00 AM - 3:00 PM"
+                        slots={availableMorningSlots}
+                        selectedTime={form.time}
+                        onSelect={(time) => setForm({ ...form, time })}
+                      />
+                      <SlotGroup
+                        label="Evening · 5:00 PM - 10:00 PM"
+                        slots={availableEveningSlots}
+                        selectedTime={form.time}
+                        onSelect={(time) => setForm({ ...form, time })}
+                      />
+                      {daySlots.length === 0 && (
+                        <p className="rounded-xl border border-dashed border-clinic-line bg-white px-4 py-4 text-sm text-clinic-ink/55">
+                          No regular appointment slots are available for this date.
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
+              {!selectedDateIsSunday && (
               <div>
                 <label
                   htmlFor="appointment-reason"
                   className="mb-1.5 block text-sm font-semibold text-clinic-ink"
                 >
-                  Reason for visit <span className="text-clinic-clay">*</span>
+                  {selectedDateIsSunday ? 'Urgency reason' : 'Reason for visit'}{' '}
+                  <span className="text-clinic-clay">*</span>
                 </label>
 
                 <input
@@ -1345,9 +1902,11 @@ export function AppointmentsPage() {
                     setForm({ ...form, reason: event.target.value })
                   }
                   placeholder="e.g. Consultation, Cleaning, Root canal follow-up"
+                  maxLength={500}
                   className="w-full rounded-xl border border-clinic-line bg-clinic-paper px-3 py-3 text-sm text-clinic-ink outline-none placeholder:text-clinic-ink/40 focus:border-clinic-teal focus:ring-4 focus:ring-clinic-teal/10"
                 />
               </div>
+              )}
 
               <div className="grid gap-5 sm:grid-cols-2">
                 <div>
@@ -1366,6 +1925,7 @@ export function AppointmentsPage() {
                       setForm({ ...form, disease: event.target.value })
                     }
                     placeholder="e.g. Tooth pain, cavity, gum swelling"
+                    maxLength={500}
                     className="w-full rounded-xl border border-clinic-line bg-clinic-paper px-3 py-3 text-sm text-clinic-ink outline-none placeholder:text-clinic-ink/40 focus:border-clinic-teal focus:ring-4 focus:ring-clinic-teal/10"
                   />
                 </div>
@@ -1380,7 +1940,8 @@ export function AppointmentsPage() {
 
                   <input
                     id="appointment-visits"
-                    type="number"
+                    type="text"
+                    inputMode="numeric"
                     min="1"
                     max="50"
                     value={form.requiredVisits}
@@ -1407,6 +1968,7 @@ export function AppointmentsPage() {
                     setForm({ ...form, plannedTreatments: event.target.value })
                   }
                   rows={2}
+                  maxLength={2000}
                   placeholder="List one or more planned treatments"
                   className="w-full resize-none rounded-xl border border-clinic-line bg-clinic-paper px-3 py-3 text-sm text-clinic-ink outline-none placeholder:text-clinic-ink/40 focus:border-clinic-teal focus:ring-4 focus:ring-clinic-teal/10"
                 />
@@ -1427,6 +1989,7 @@ export function AppointmentsPage() {
                     setForm({ ...form, notes: event.target.value })
                   }
                   rows={3}
+                  maxLength={5000}
                   placeholder="Optional appointment notes..."
                   className="w-full resize-none rounded-xl border border-clinic-line bg-clinic-paper px-3 py-3 text-sm text-clinic-ink outline-none placeholder:text-clinic-ink/40 focus:border-clinic-teal focus:ring-4 focus:ring-clinic-teal/10"
                 />
