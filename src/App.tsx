@@ -175,21 +175,25 @@ function Dashboard() {
         <StatCard
           title="Today's appointments"
           value={String(todaysAppointments.length)}
+          to="/appointments"
         />
 
         <StatCard
           title="Total patients"
           value={String(patients.length)}
+          to="/patients"
         />
 
         <StatCard
           title="Outstanding payments"
           value={formatCurrency(outstandingPayments)}
+          to="/billing"
         />
 
         <StatCard
           title="Low stock items"
           value={String(lowStockItems.length)}
+          to="/inventory"
         />
       </div>
 
@@ -261,58 +265,42 @@ function Dashboard() {
       </div>
 
       <div className="mt-6 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        <div className="rounded-2xl border border-clinic-line bg-white p-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-clinic-ink/40">
-            Scheduled
-          </p>
+        <DashboardStatusCard
+          title="Scheduled"
+          value={
+            todaysAppointments.filter(
+              (item) => item.status === 'Scheduled',
+            ).length
+          }
+          to="/appointments"
+        />
 
-          <p className="mt-3 font-display text-3xl font-semibold">
-            {
-              todaysAppointments.filter(
-                (item) => item.status === 'Scheduled',
-              ).length
-            }
-          </p>
-        </div>
+        <DashboardStatusCard
+          title="Under treatment"
+          value={
+            todaysAppointments.filter(
+              (item) =>
+                item.status === 'Under treatment',
+            ).length
+          }
+          to="/treatments"
+        />
 
-        <div className="rounded-2xl border border-clinic-line bg-white p-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-clinic-ink/40">
-            Under treatment
-          </p>
+        <DashboardStatusCard
+          title="Completed"
+          value={
+            todaysAppointments.filter(
+              (item) => item.status === 'Completed',
+            ).length
+          }
+          to="/patients"
+        />
 
-          <p className="mt-3 font-display text-3xl font-semibold">
-            {
-              todaysAppointments.filter(
-                (item) =>
-                  item.status === 'Under treatment',
-              ).length
-            }
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-clinic-line bg-white p-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-clinic-ink/40">
-            Completed
-          </p>
-
-          <p className="mt-3 font-display text-3xl font-semibold">
-            {
-              todaysAppointments.filter(
-                (item) => item.status === 'Completed',
-              ).length
-            }
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-clinic-line bg-white p-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-clinic-ink/40">
-            Inventory alerts
-          </p>
-
-          <p className="mt-3 font-display text-3xl font-semibold">
-            {lowStockItems.length}
-          </p>
-        </div>
+        <DashboardStatusCard
+          title="Inventory alerts"
+          value={lowStockItems.length}
+          to="/inventory"
+        />
       </div>
     </section>
   )
@@ -367,6 +355,11 @@ function App() {
 
             <Route
               path="/reports"
+              element={<ReportsPage />}
+            />
+
+            <Route
+              path="/reports/patient/:patientId"
               element={<ReportsPage />}
             />
 
@@ -530,12 +523,17 @@ function NavigationItem({
 function StatCard({
   title,
   value,
+  to,
 }: {
   title: string
   value: string
+  to: string
 }) {
   return (
-    <div className="rounded-2xl border border-clinic-line bg-white p-5">
+    <NavLink
+      to={to}
+      className="group block rounded-2xl border border-clinic-line bg-white p-5 transition hover:-translate-y-0.5 hover:border-clinic-teal/30 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-clinic-teal/30"
+    >
       <div className="text-xs font-semibold uppercase tracking-wide text-clinic-ink/40">
         {title}
       </div>
@@ -544,10 +542,39 @@ function StatCard({
         {value}
       </div>
 
-      <div className="mt-2 text-xs text-clinic-ink/40">
-        Live clinic data
+      <div className="mt-2 text-xs text-clinic-ink/40 transition group-hover:text-clinic-teal">
+        View details →
       </div>
-    </div>
+    </NavLink>
+  )
+}
+
+function DashboardStatusCard({
+  title,
+  value,
+  to,
+}: {
+  title: string
+  value: number
+  to: string
+}) {
+  return (
+    <NavLink
+      to={to}
+      className="group block rounded-2xl border border-clinic-line bg-white p-5 transition hover:-translate-y-0.5 hover:border-clinic-teal/30 hover:shadow-md focus:outline-none focus:ring-2 focus:ring-clinic-teal/30"
+    >
+      <p className="text-xs font-semibold uppercase tracking-wide text-clinic-ink/40">
+        {title}
+      </p>
+
+      <p className="mt-3 font-display text-3xl font-semibold">
+        {value}
+      </p>
+
+      <p className="mt-2 text-xs text-clinic-ink/40 transition group-hover:text-clinic-teal">
+        View details →
+      </p>
+    </NavLink>
   )
 }
 

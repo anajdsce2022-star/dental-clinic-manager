@@ -10,6 +10,7 @@ import {
   Plus,
   RotateCcw,
   Search,
+  SlidersHorizontal,
   Trash2,
   X,
 } from 'lucide-react'
@@ -47,6 +48,39 @@ type StockAction = {
   reference: string
 }
 
+type InventoryUsageRule = {
+  id: string
+  inventoryItemId: string
+  itemName: string
+  aliases: string[]
+  quantity: number
+}
+
+type TreatmentInventoryRules = Record<string, InventoryUsageRule[]>
+
+type TreatmentCatalogueItem = {
+  id: string
+  name: string
+  usageCount: number
+  createdAt: string
+  custom?: boolean
+}
+
+type InventoryCatalogueItem = {
+  id: string
+  name: string
+  createdAt: string
+  custom?: boolean
+}
+
+const DEFAULT_INVENTORY_CATALOGUE = [
+  'GIC cement', 'Composite resin', 'Etchant', 'Bonding agent',
+  'K file', 'Rotary file', 'Gutta-percha', 'Endodontic sealer',
+  'Irrigation solution', 'Dental needle', 'Local anaesthetic',
+  'Gauze', 'Suture', 'Cotton roll', 'Gloves', 'Prophy paste',
+  'Sealant', 'Alginate', 'Impression material',
+]
+
 type ItemForm = {
   name: string
   category: string
@@ -57,6 +91,8 @@ type ItemForm = {
   supplier: string
   expiryDate: string
 }
+
+type BulkItemForm = Omit<ItemForm, 'purchasePrice'>
 
 type StockForm = {
   quantity: string
@@ -82,6 +118,9 @@ type Notice = {
 
 const ITEMS_KEY = 'joshi-dental-clinic-inventory'
 const HISTORY_KEY = 'joshi-dental-clinic-inventory-history'
+const RULES_KEY = 'joshi-dental-clinic-inventory-rules'
+const CATALOGUE_KEY = 'joshi-dental-clinic-treatment-catalogue'
+const INVENTORY_CATALOGUE_KEY = 'joshi-dental-clinic-inventory-catalogue'
 
 const DATA_VERSION = 2
 
@@ -98,10 +137,102 @@ const emptyForm: ItemForm = {
   expiryDate: '',
 }
 
+const emptyBulkItem: BulkItemForm = {
+  name: '',
+  category: '',
+  quantity: '',
+  unit: 'pieces',
+  minimumStock: '',
+  supplier: '',
+  expiryDate: '',
+}
+
 const emptyStockForm: StockForm = {
   quantity: '1',
   note: '',
   reference: '',
+}
+
+
+const DEFAULT_TREATMENTS = [
+  'Consultation / Dental examination', 'Dental X-ray', 'Scaling & polishing',
+  'Fluoride application', 'Dental filling — GIC', 'Dental filling — Composite',
+  'Temporary filling', 'Root canal treatment', 'Root canal retreatment', 'Crown',
+  'Bridge', 'Veneer', 'Tooth extraction', 'Surgical extraction',
+  'Wisdom tooth extraction', 'Dental implant', 'Denture', 'Local anaesthesia',
+  'Pulpotomy', 'Pulpectomy', 'Post & core', 'Cementation', 'Dental sealant',
+  'Teeth bleaching', 'Orthodontic adjustment', 'Emergency pain management',
+  'Dressing', 'Suturing', 'Follow-up / review',
+]
+
+const DEFAULT_USAGE_DEFINITIONS: Record<string, { aliases: string[]; quantity: number }[]> = {
+  'Dental filling — GIC': [
+    { aliases: ['GIC cement', 'glass ionomer cement'], quantity: 1 },
+    { aliases: ['cotton roll', 'cotton rolls'], quantity: 2 },
+    { aliases: ['gloves', 'disposable gloves'], quantity: 2 },
+  ],
+  'Dental filling — Composite': [
+    { aliases: ['composite resin', 'composite'], quantity: 1 },
+    { aliases: ['etchant', 'etching gel'], quantity: 1 },
+    { aliases: ['bonding agent', 'bond'], quantity: 1 },
+    { aliases: ['cotton roll', 'cotton rolls'], quantity: 2 },
+    { aliases: ['gloves', 'disposable gloves'], quantity: 2 },
+  ],
+  'Root canal treatment': [
+    { aliases: ['K file', 'K-file', 'K files', 'K-files'], quantity: 1 },
+    { aliases: ['rotary file', 'rotary files'], quantity: 1 },
+    { aliases: ['gutta-percha', 'gutta percha'], quantity: 2 },
+    { aliases: ['endodontic sealer', 'sealer'], quantity: 1 },
+    { aliases: ['irrigation solution', 'irrigant'], quantity: 1 },
+    { aliases: ['dental needle', 'dental needles', 'needle'], quantity: 1 },
+    { aliases: ['gloves', 'disposable gloves'], quantity: 2 },
+  ],
+  'Root canal retreatment': [
+    { aliases: ['K file', 'K-file', 'K files', 'K-files'], quantity: 1 },
+    { aliases: ['rotary file', 'rotary files'], quantity: 1 },
+    { aliases: ['gutta-percha', 'gutta percha'], quantity: 2 },
+    { aliases: ['endodontic sealer', 'sealer'], quantity: 1 },
+    { aliases: ['irrigation solution', 'irrigant'], quantity: 1 },
+    { aliases: ['dental needle', 'dental needles', 'needle'], quantity: 1 },
+    { aliases: ['gloves', 'disposable gloves'], quantity: 2 },
+  ],
+  'Tooth extraction': [
+    { aliases: ['dental needle', 'dental needles', 'needle'], quantity: 1 },
+    { aliases: ['local anaesthetic', 'local anesthetic'], quantity: 1 },
+    { aliases: ['gauze', 'gauze pieces'], quantity: 2 },
+    { aliases: ['gloves', 'disposable gloves'], quantity: 2 },
+  ],
+  'Surgical extraction': [
+    { aliases: ['dental needle', 'dental needles', 'needle'], quantity: 1 },
+    { aliases: ['local anaesthetic', 'local anesthetic'], quantity: 2 },
+    { aliases: ['gauze', 'gauze pieces'], quantity: 3 },
+    { aliases: ['suture', 'sutures', 'suture material'], quantity: 1 },
+    { aliases: ['gloves', 'disposable gloves'], quantity: 2 },
+  ],
+  'Wisdom tooth extraction': [
+    { aliases: ['dental needle', 'dental needles', 'needle'], quantity: 2 },
+    { aliases: ['local anaesthetic', 'local anesthetic'], quantity: 2 },
+    { aliases: ['gauze', 'gauze pieces'], quantity: 3 },
+    { aliases: ['suture', 'sutures', 'suture material'], quantity: 1 },
+    { aliases: ['gloves', 'disposable gloves'], quantity: 2 },
+  ],
+  'Scaling & polishing': [
+    { aliases: ['prophy paste', 'prophylaxis paste'], quantity: 1 },
+    { aliases: ['cotton roll', 'cotton rolls'], quantity: 2 },
+    { aliases: ['gloves', 'disposable gloves'], quantity: 2 },
+  ],
+  'Dental sealant': [
+    { aliases: ['sealant', 'dental sealant'], quantity: 1 },
+    { aliases: ['etchant', 'etching gel'], quantity: 1 },
+    { aliases: ['bonding agent', 'bond'], quantity: 1 },
+    { aliases: ['cotton roll', 'cotton rolls'], quantity: 2 },
+    { aliases: ['gloves', 'disposable gloves'], quantity: 2 },
+  ],
+  'Denture': [
+    { aliases: ['alginate', 'alginate impression material'], quantity: 1 },
+    { aliases: ['impression material'], quantity: 1 },
+    { aliases: ['gloves', 'disposable gloves'], quantity: 2 },
+  ],
 }
 
 const DEFAULT_CATEGORIES = [
@@ -131,28 +262,35 @@ const UNITS = [
   'units',
 ]
 
+function normalizeLeadingZeros(value: string) {
+  if (value === '') return ''
+  if (value === '0') return ''
+
+  const [whole, ...fraction] = value.split('.')
+  const normalizedWhole = whole.replace(/^0+(?=\d)/, '')
+
+  if (fraction.length === 0) return normalizedWhole
+  return `${normalizedWhole || '0'}.${fraction.join('')}`
+}
+
 function sanitizeQuantityInput(value: string) {
   const sanitized = value.replace(/[^\d.]/g, '')
   const parts = sanitized.split('.')
+  const normalized = parts.length <= 1
+    ? sanitized
+    : `${parts[0]}.${parts.slice(1).join('')}`
 
-  if (parts.length <= 1) {
-    return sanitized
-  }
-
-  return `${parts[0]}.${parts.slice(1).join('')}`
+  return normalizeLeadingZeros(normalized)
 }
 
 function sanitizePriceInput(value: string) {
   const sanitized = value.replace(/[^\d.]/g, '')
   const parts = sanitized.split('.')
-
-  if (parts.length <= 1) {
-    return sanitized
-  }
-
+  const whole = parts[0] || ''
   const decimals = parts.slice(1).join('').slice(0, 2)
+  const normalized = parts.length <= 1 ? whole : `${whole}.${decimals}`
 
-  return `${parts[0]}.${decimals}`
+  return normalizeLeadingZeros(normalized)
 }
 
 function numberValue(value: string) {
@@ -467,6 +605,92 @@ function getDaysUntilExpiry(item: InventoryItem) {
   )
 }
 
+
+function normalizeRuleName(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim()
+}
+
+function loadInventoryCatalogue(): InventoryCatalogueItem[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(INVENTORY_CATALOGUE_KEY) || '[]')
+    const map = new Map<string, InventoryCatalogueItem>()
+
+    DEFAULT_INVENTORY_CATALOGUE.forEach((name, index) => {
+      map.set(normalizeText(name), {
+        id: `inventory-default-${index}`,
+        name,
+        createdAt: new Date(0).toISOString(),
+      })
+    })
+
+    if (Array.isArray(parsed)) {
+      parsed.forEach((value) => {
+        if (!value || typeof value !== 'object') return
+        const record = value as Record<string, unknown>
+        if (typeof record.name !== 'string' || !record.name.trim()) return
+        const name = record.name.trim().replace(/\s+/g, ' ')
+        map.set(normalizeText(name), {
+          id: typeof record.id === 'string' ? record.id : crypto.randomUUID(),
+          name,
+          createdAt: typeof record.createdAt === 'string' ? record.createdAt : new Date().toISOString(),
+          custom: record.custom === true,
+        })
+      })
+    }
+
+    return [...map.values()].sort((a, b) => a.name.localeCompare(b.name))
+  } catch {
+    return DEFAULT_INVENTORY_CATALOGUE.map((name, index) => ({
+      id: `inventory-default-${index}`, name, createdAt: new Date(0).toISOString(),
+    }))
+  }
+}
+function loadTreatmentCatalogue(): TreatmentCatalogueItem[] {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(CATALOGUE_KEY) || '[]')
+    const map = new Map<string, TreatmentCatalogueItem>()
+    DEFAULT_TREATMENTS.forEach((name, index) => map.set(normalizeRuleName(name), {
+      id: `default-${index}`, name, usageCount: 0, createdAt: new Date(0).toISOString(),
+    }))
+    if (Array.isArray(parsed)) parsed.forEach((value) => {
+      if (!value || typeof value !== 'object') return
+      const r = value as Record<string, unknown>
+      if (typeof r.name !== 'string' || !r.name.trim()) return
+      map.set(normalizeRuleName(r.name), {
+        id: typeof r.id === 'string' ? r.id : crypto.randomUUID(),
+        name: r.name.trim(), usageCount: Number(r.usageCount) || 0,
+        createdAt: typeof r.createdAt === 'string' ? r.createdAt : new Date().toISOString(),
+        custom: r.custom === true,
+      })
+    })
+    return [...map.values()].sort((a, b) => b.usageCount - a.usageCount || a.name.localeCompare(b.name))
+  } catch { return DEFAULT_TREATMENTS.map((name, index) => ({ id: `default-${index}`, name, usageCount: 0, createdAt: new Date(0).toISOString() })) }
+}
+
+function loadUsageRules(items: InventoryItem[]): TreatmentInventoryRules {
+  try {
+    const stored = JSON.parse(localStorage.getItem(RULES_KEY) || 'null')
+    if (stored && typeof stored === 'object' && !Array.isArray(stored)) return stored as TreatmentInventoryRules
+  } catch { /* fall through to clinic defaults */ }
+
+  const result: TreatmentInventoryRules = {}
+  Object.entries(DEFAULT_USAGE_DEFINITIONS).forEach(([treatmentName, definitions]) => {
+    result[treatmentName] = definitions.map((definition) => {
+      const normalized = definition.aliases.map(normalizeRuleName)
+      const match = items.find((item) => normalized.includes(normalizeRuleName(item.name)))
+      return {
+        id: crypto.randomUUID(),
+        inventoryItemId: match?.id || '',
+        itemName: match?.name || definition.aliases[0],
+        aliases: definition.aliases,
+        quantity: definition.quantity,
+      }
+    })
+  })
+  try { localStorage.setItem(RULES_KEY, JSON.stringify(result)) } catch { /* best effort */ }
+  return result
+}
+
 function loadInventoryItems() {
   try {
     const savedItems = localStorage.getItem(ITEMS_KEY)
@@ -502,6 +726,20 @@ export function InventoryPage() {
   const [showForm, setShowForm] = useState(false)
   const [showStockModal, setShowStockModal] = useState(false)
   const [showHistory, setShowHistory] = useState(false)
+  const [showUsageRules, setShowUsageRules] = useState(false)
+  const [treatmentCatalogue, setTreatmentCatalogue] = useState<TreatmentCatalogueItem[]>(loadTreatmentCatalogue)
+  const [usageRules, setUsageRules] = useState<TreatmentInventoryRules>(() => loadUsageRules(loadInventoryItems()))
+  const [selectedTreatmentForRules, setSelectedTreatmentForRules] = useState('Dental filling — GIC')
+  const [ruleDraft, setRuleDraft] = useState<InventoryUsageRule[]>([])
+  const [ruleSearch, setRuleSearch] = useState<Record<string, string>>({})
+  const [pendingRuleInventoryItemId, setPendingRuleInventoryItemId] = useState<string | null>(null)
+  const [bulkMode, setBulkMode] = useState(false)
+  const [bulkItems, setBulkItems] = useState<BulkItemForm[]>([{ ...emptyBulkItem }])
+  const [bulkTotalCost, setBulkTotalCost] = useState('')
+  const [itemNameSearch, setItemNameSearch] = useState('')
+  const [showItemNameSuggestions, setShowItemNameSuggestions] = useState(false)
+  const [inventoryCatalogue, setInventoryCatalogue] = useState<InventoryCatalogueItem[]>(loadInventoryCatalogue)
+  const [openBulkCatalogueIndex, setOpenBulkCatalogueIndex] = useState<number | null>(null)
 
   const [editingItem, setEditingItem] = useState<InventoryItem | null>(null)
   const [stockItem, setStockItem] = useState<InventoryItem | null>(null)
@@ -532,6 +770,23 @@ export function InventoryPage() {
       window.setTimeout(() => setStorageError(true), 0)
     }
   }, [history])
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(INVENTORY_CATALOGUE_KEY, JSON.stringify(inventoryCatalogue))
+    } catch {
+      window.setTimeout(() => setStorageError(true), 0)
+    }
+  }, [inventoryCatalogue])
+
+
+  useEffect(() => {
+    try { localStorage.setItem(RULES_KEY, JSON.stringify(usageRules)) } catch { setStorageError(true) }
+  }, [usageRules])
+
+  useEffect(() => {
+    setRuleDraft(usageRules[selectedTreatmentForRules] || [])
+  }, [selectedTreatmentForRules, usageRules, showUsageRules])
 
   useEffect(() => {
     try {
@@ -659,6 +914,45 @@ export function InventoryPage() {
     })
   }
 
+
+  function openUsageRules() {
+    const catalogue = loadTreatmentCatalogue()
+    setTreatmentCatalogue(catalogue)
+    const preferred = catalogue.find((item) => item.name === 'Dental filling — GIC') || catalogue[0]
+    if (preferred) setSelectedTreatmentForRules((current) => catalogue.some((item) => item.name === current) ? current : preferred.name)
+    setShowUsageRules(true)
+  }
+
+  function openAddInventoryItemForRule(ruleId: string) {
+    setPendingRuleInventoryItemId(ruleId)
+    setEditingItem(null)
+    setForm(emptyForm)
+    setShowForm(true)
+  }
+
+  function addRuleRow() {
+    setRuleDraft((current) => [...current, { id: crypto.randomUUID(), inventoryItemId: '', itemName: '', aliases: [], quantity: 1 }])
+  }
+
+  function updateRule(ruleId: string, patch: Partial<InventoryUsageRule>) {
+    setRuleDraft((current) => current.map((rule) => rule.id === ruleId ? { ...rule, ...patch } : rule))
+  }
+
+  function removeRule(ruleId: string) {
+    setRuleDraft((current) => current.filter((rule) => rule.id !== ruleId))
+  }
+
+  function saveUsageRules() {
+    const clean = ruleDraft.filter((rule) => rule.inventoryItemId && Number.isFinite(rule.quantity) && rule.quantity > 0)
+    if (clean.length !== ruleDraft.length) {
+      showError('Every material row must have an inventory item and a quantity greater than zero.')
+      return
+    }
+    setUsageRules((current) => ({ ...current, [selectedTreatmentForRules]: clean }))
+    setShowUsageRules(false)
+    showSuccess(`Inventory usage rules saved for ${selectedTreatmentForRules}.`)
+  }
+
   function showError(message: string) {
     setNotice({
       type: 'error',
@@ -666,9 +960,52 @@ export function InventoryPage() {
     })
   }
 
+  function addInventoryCatalogueItem(name: string) {
+    const cleanName = name.trim().replace(/\s+/g, ' ')
+    if (!cleanName) return
+    setInventoryCatalogue((current) => {
+      if (current.some((item) => normalizeText(item.name) === normalizeText(cleanName))) return current
+      return [...current, {
+        id: crypto.randomUUID(),
+        name: cleanName,
+        createdAt: new Date().toISOString(),
+        custom: true,
+      }].sort((a, b) => a.name.localeCompare(b.name))
+    })
+  }
+
+  function selectCatalogueItem(name: string) {
+    setItemNameSearch(name)
+    setForm((current) => ({ ...current, name }))
+    setShowItemNameSuggestions(false)
+  }
+
+  function selectBulkCatalogueItem(index: number, name: string) {
+    updateBulkRow(index, { name })
+    setOpenBulkCatalogueIndex(null)
+  }
+
   function openAddItem() {
     setEditingItem(null)
     setForm(emptyForm)
+    setBulkMode(false)
+    setBulkItems([{ ...emptyBulkItem }])
+    setBulkTotalCost('')
+    setItemNameSearch('')
+    setShowItemNameSuggestions(false)
+    setOpenBulkCatalogueIndex(null)
+    setShowForm(true)
+  }
+
+  function openAddMultipleItems() {
+    setEditingItem(null)
+    setForm(emptyForm)
+    setBulkMode(true)
+    setBulkItems([{ ...emptyBulkItem }])
+    setBulkTotalCost('')
+    setItemNameSearch('')
+    setShowItemNameSuggestions(false)
+    setOpenBulkCatalogueIndex(null)
     setShowForm(true)
   }
 
@@ -693,10 +1030,175 @@ export function InventoryPage() {
     setShowForm(false)
     setEditingItem(null)
     setForm(emptyForm)
+    setBulkMode(false)
+    setBulkItems([{ ...emptyBulkItem }])
+    setBulkTotalCost('')
+    setItemNameSearch('')
+    setShowItemNameSuggestions(false)
+    setOpenBulkCatalogueIndex(null)
+    setPendingRuleInventoryItemId(null)
+  }
+
+  function addBulkRow() {
+    setBulkItems((current) => [...current, { ...emptyBulkItem }])
+  }
+
+  function updateBulkRow(index: number, patch: Partial<BulkItemForm>) {
+    setBulkItems((current) => current.map((row, rowIndex) => rowIndex === index ? { ...row, ...patch } : row))
+  }
+
+  function removeBulkRow(index: number) {
+    setBulkItems((current) => current.length === 1 ? current : current.filter((_, rowIndex) => rowIndex !== index))
+  }
+
+  function handleBulkSubmit() {
+    const rows = bulkItems.map((row) => ({
+      ...row,
+      name: row.name.trim().replace(/\s+/g, ' '),
+      category: row.category.trim().replace(/\s+/g, ' '),
+      supplier: row.supplier.trim().replace(/\s+/g, ' '),
+      unit: row.unit.trim() || 'pieces',
+      quantity: roundQuantity(numberValue(row.quantity)),
+      minimumStock: roundQuantity(numberValue(row.minimumStock)),
+    }))
+
+    if (rows.some((row) => !row.name)) {
+      showError('Please enter an item name for every row.')
+      return
+    }
+
+    const names = new Set<string>()
+    for (const row of rows) {
+      const key = normalizeText(row.name)
+
+      // Selecting an existing catalogue item is valid. The only duplicate
+      // that must be blocked is selecting/entering the same item more than
+      // once within this bulk operation.
+      if (names.has(key)) {
+        showError(`Duplicate item in this batch: “${row.name}”. Each inventory item can be added only once per batch.`)
+        return
+      }
+      names.add(key)
+    }
+
+    if (rows.some((row) => row.quantity < 0 || row.minimumStock < 0)) {
+      showError('Quantity and minimum stock cannot be negative.')
+      return
+    }
+
+    const totalCost = numberValue(bulkTotalCost)
+    if (!Number.isFinite(totalCost) || totalCost < 0 || totalCost > 100000000) {
+      showError('Please enter a valid total purchase amount.')
+      return
+    }
+
+    const totalQuantity = rows.reduce((sum, row) => sum + row.quantity, 0)
+    const totalCostPaise = rupeesToPaise(totalCost)
+    const costPerUnitPaise = totalQuantity > 0 ? Math.round(totalCostPaise / totalQuantity) : 0
+    const now = new Date().toISOString()
+
+    const existingRows = rows
+      .map((row) => ({
+        row,
+        item: activeItems.find((item) => normalizeText(item.name) === normalizeText(row.name)),
+      }))
+      .filter((entry): entry is { row: (typeof rows)[number]; item: InventoryItem } => Boolean(entry.item))
+
+    const newRows = rows.filter(
+      (row) => !activeItems.some((item) => normalizeText(item.name) === normalizeText(row.name)),
+    )
+
+    newRows.forEach((row) => addInventoryCatalogueItem(row.name))
+
+    const newItems: InventoryItem[] = newRows.map((row) => ({
+      id: crypto.randomUUID(),
+      name: row.name,
+      category: row.category,
+      quantity: row.quantity,
+      unit: row.unit,
+      minimumStock: row.minimumStock,
+      purchasePricePaise: costPerUnitPaise,
+      supplier: row.supplier,
+      expiryDate: row.expiryDate,
+      createdAt: now,
+      updatedAt: now,
+    }))
+
+    const existingUpdates = existingRows.map(({ row, item }) => ({
+      item,
+      quantityToAdd: row.quantity,
+      nextQuantity: item.quantity + row.quantity,
+    }))
+
+    if (existingRows.length > 0 || newItems.length > 0) {
+      setItems((current) => {
+        const updatedExisting = current.map((item) => {
+          const update = existingUpdates.find((entry) => entry.item.id === item.id)
+          if (!update) return item
+
+          const row = existingRows.find((entry) => entry.item.id === item.id)?.row
+          return {
+            ...item,
+            category: row?.category || item.category,
+            unit: row?.unit || item.unit,
+            minimumStock: row?.minimumStock ?? item.minimumStock,
+            purchasePricePaise: costPerUnitPaise || item.purchasePricePaise,
+            supplier: row?.supplier || item.supplier,
+            expiryDate: row?.expiryDate || item.expiryDate,
+            quantity: update.nextQuantity,
+            updatedAt: now,
+          }
+        })
+
+        return [...newItems, ...updatedExisting]
+      })
+    }
+
+    const stockHistory: StockAction[] = [
+      ...newItems
+        .filter((item) => item.quantity > 0)
+        .map((item) => ({
+          id: crypto.randomUUID(),
+          itemId: item.id,
+          type: 'Opening stock' as const,
+          quantity: item.quantity,
+          previousQuantity: 0,
+          newQuantity: item.quantity,
+          date: now,
+          note: 'Opening stock entered during bulk inventory entry.',
+          reference: '',
+        })),
+      ...existingUpdates
+        .filter((entry) => entry.quantityToAdd > 0)
+        .map((entry) => ({
+          id: crypto.randomUUID(),
+          itemId: entry.item.id,
+          type: 'Stock added' as const,
+          quantity: entry.quantityToAdd,
+          previousQuantity: entry.item.quantity,
+          newQuantity: entry.nextQuantity,
+          date: now,
+          note: 'Stock added during bulk inventory entry.',
+          reference: '',
+        })),
+    ]
+
+    if (stockHistory.length) setHistory((current) => [...stockHistory, ...current])
+
+    closeForm()
+    const existingCount = existingRows.length
+    const newCount = newItems.length
+    showSuccess(
+      `${newCount + existingCount} inventory item${newCount + existingCount === 1 ? '' : 's'} processed${existingCount ? ` (${existingCount} existing item${existingCount === 1 ? '' : 's'} updated)` : ''}.`,
+    )
   }
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
+    if (bulkMode && !editingItem) {
+      handleBulkSubmit()
+      return
+    }
 
     const name = form.name.trim().replace(/\s+/g, ' ')
     const category = form.category.trim().replace(/\s+/g, ' ')
@@ -709,11 +1211,6 @@ export function InventoryPage() {
 
     if (!name) {
       showError('Please enter the item name.')
-      return
-    }
-
-    if (!category) {
-      showError('Please enter the category.')
       return
     }
 
@@ -743,24 +1240,6 @@ export function InventoryPage() {
         showError('Please enter a valid expiry date.')
         return
       }
-    }
-
-    const duplicate = activeItems.find((item) => {
-      if (editingItem && item.id === editingItem.id) {
-        return false
-      }
-
-      return (
-        normalizeText(item.name) === normalizeText(name) &&
-        normalizeText(item.category) === normalizeText(category)
-      )
-    })
-
-    if (duplicate) {
-      showError(
-        `"${duplicate.name}" already exists in this category. Edit the existing item instead.`,
-      )
-      return
     }
 
     const now = new Date().toISOString()
@@ -796,6 +1275,63 @@ export function InventoryPage() {
       return
     }
 
+    // An exact catalogue match means the user selected/entered an existing
+    // item. Use that record and add the entered opening quantity to its stock;
+    // never create a second record for the same inventory item.
+    const existingItem = activeItems.find(
+      (item) => normalizeText(item.name) === normalizeText(name),
+    )
+
+    if (existingItem) {
+      const nextQuantity = existingItem.quantity + quantity
+
+      setItems((current) =>
+        current.map((item) =>
+          item.id === existingItem.id
+            ? {
+                ...item,
+                quantity: nextQuantity,
+                updatedAt: now,
+              }
+            : item,
+        ),
+      )
+
+      if (quantity > 0) {
+        const stockAdded: StockAction = {
+          id: crypto.randomUUID(),
+          itemId: existingItem.id,
+          type: 'Stock added',
+          quantity,
+          previousQuantity: existingItem.quantity,
+          newQuantity: nextQuantity,
+          date: now,
+          note: 'Stock added from inventory item entry using an existing catalogue item.',
+          reference: '',
+        }
+        setHistory((current) => [stockAdded, ...current])
+      }
+
+      if (pendingRuleInventoryItemId) {
+        updateRule(pendingRuleInventoryItemId, {
+          inventoryItemId: existingItem.id,
+          itemName: existingItem.name,
+          aliases: [existingItem.name],
+        })
+        setPendingRuleInventoryItemId(null)
+      }
+
+      closeForm()
+      showSuccess(
+        quantity > 0
+          ? `“${existingItem.name}” selected and ${quantity} ${existingItem.unit} added to existing stock.`
+          : `“${existingItem.name}” selected from the inventory catalogue. No duplicate item was created.`,
+      )
+      return
+    }
+
+    addInventoryCatalogueItem(name)
+
     const newItem: InventoryItem = {
       id: crypto.randomUUID(),
       name,
@@ -811,6 +1347,15 @@ export function InventoryPage() {
     }
 
     setItems((current) => [newItem, ...current])
+
+    if (pendingRuleInventoryItemId) {
+      updateRule(pendingRuleInventoryItemId, {
+        inventoryItemId: newItem.id,
+        itemName: newItem.name,
+        aliases: [newItem.name],
+      })
+      setPendingRuleInventoryItemId(null)
+    }
 
     if (quantity > 0) {
       const openingStock: StockAction = {
@@ -1134,14 +1679,24 @@ export function InventoryPage() {
           </p>
         </div>
 
-        <button
-          type="button"
-          onClick={openAddItem}
-          className="inline-flex items-center justify-center gap-2 rounded-xl bg-clinic-teal px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
-        >
-          <Plus size={18} />
-          Add item
-        </button>
+        <div className="flex flex-col gap-2 sm:flex-row">
+          <button
+            type="button"
+            onClick={openAddItem}
+            className="inline-flex items-center justify-center gap-2 rounded-xl bg-clinic-teal px-5 py-3 text-sm font-semibold text-white shadow-sm transition hover:opacity-90"
+          >
+            <Plus size={18} />
+            Add item
+          </button>
+          <button
+            type="button"
+            onClick={openAddMultipleItems}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-clinic-teal bg-white px-5 py-3 text-sm font-semibold text-clinic-teal shadow-sm transition hover:bg-clinic-paper"
+          >
+            <Plus size={18} />
+            Add multiple items
+          </button>
+        </div>
       </div>
 
       {/* Summary cards */}
@@ -1196,7 +1751,7 @@ export function InventoryPage() {
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="Search item, category or supplier..."
-              className="input-field pl-10"
+              className="input-field !pl-11 !pr-4"
               aria-label="Search inventory"
             />
           </div>
@@ -1230,6 +1785,15 @@ export function InventoryPage() {
           >
             <History size={17} />
             Stock history
+          </button>
+
+          <button
+            type="button"
+            onClick={openUsageRules}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-clinic-line px-4 py-3 text-sm font-semibold text-clinic-ink/70 hover:bg-clinic-paper"
+          >
+            <SlidersHorizontal size={17} />
+            Treatment usage
           </button>
         </div>
       </div>
@@ -1505,27 +2069,238 @@ export function InventoryPage() {
           onClose={closeForm}
           maxWidth="max-w-2xl"
         >
+          {!editingItem && (
+            <div className="mb-5 flex items-center justify-between rounded-xl border border-clinic-line bg-clinic-paper/60 p-3">
+              <div>
+                <p className="text-sm font-semibold text-clinic-ink">Add multiple inventory items</p>
+                <p className="mt-0.5 text-xs text-clinic-ink/50">Enter each item's details separately and one total purchase amount.</p>
+              </div>
+              <div className="flex items-center gap-1 rounded-xl border border-clinic-line bg-white p-1">
+                <button
+                  type="button"
+                  onClick={() => setBulkMode(false)}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${!bulkMode ? 'bg-clinic-teal text-white' : 'text-clinic-ink/60 hover:bg-clinic-paper'}`}
+                >
+                  Single item
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setBulkMode(true)}
+                  className={`rounded-lg px-3 py-2 text-sm font-semibold transition ${bulkMode ? 'bg-clinic-teal text-white' : 'text-clinic-ink/60 hover:bg-clinic-paper'}`}
+                >
+                  Multiple items
+                </button>
+              </div>
+            </div>
+          )}
+
           <form onSubmit={handleSubmit} className="space-y-5">
+            {bulkMode && !editingItem ? (
+              <>
+                <div className="space-y-4">
+                  {bulkItems.map((row, index) => (
+                    <div key={index} className="rounded-2xl border border-clinic-line bg-clinic-paper/40 p-4">
+                      <div className="mb-4 flex items-center justify-between">
+                        <p className="font-semibold text-clinic-ink">Item {index + 1}</p>
+                        {bulkItems.length > 1 && (
+                          <button type="button" onClick={() => removeBulkRow(index)} className="text-sm font-semibold text-red-600 hover:text-red-700">Remove</button>
+                        )}
+                      </div>
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <Field label="Item name" required>
+                          <div className="relative">
+                            <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-clinic-ink/35" />
+                            <input
+                              type="text"
+                              value={row.name}
+                              onFocus={() => setOpenBulkCatalogueIndex(index)}
+                              onBlur={() => window.setTimeout(() => setOpenBulkCatalogueIndex((current) => current === index ? null : current), 150)}
+                              onChange={(event) => {
+                                updateBulkRow(index, { name: event.target.value })
+                                setOpenBulkCatalogueIndex(index)
+                              }}
+                              placeholder="Search existing items or enter a new item"
+                              className="input-field !pl-11 !pr-4"
+                              maxLength={100}
+                              required
+                              autoComplete="off"
+                            />
+                            {openBulkCatalogueIndex === index && (
+                              <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-72 overflow-y-auto rounded-xl border border-clinic-line bg-white p-1.5 shadow-lg">
+                                 {inventoryCatalogue
+                                   .filter((item) =>
+                                     !row.name.trim() ||
+                                     normalizeText(item.name).includes(normalizeText(row.name)),
+                                   )
+                                   .map((item) => (
+                                     <button
+                                       key={item.id}
+                                       type="button"
+                                       onMouseDown={(event) => event.preventDefault()}
+                                       onClick={() => selectBulkCatalogueItem(index, item.name)}
+                                       className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm hover:bg-clinic-paper"
+                                     >
+                                       <span className="font-medium text-clinic-ink">{item.name}</span>
+                                       {activeItems.some((active) => normalizeText(active.name) === normalizeText(item.name)) && (
+                                         <span className="ml-3 shrink-0 text-xs text-clinic-ink/45">In stock list</span>
+                                       )}
+                                     </button>
+                                   ))}
+                                 {inventoryCatalogue.filter((item) =>
+                                   !row.name.trim() ||
+                                   normalizeText(item.name).includes(normalizeText(row.name)),
+                                 ).length === 0 && (
+                                   <div className="px-3 py-3 text-sm text-clinic-ink/50">
+                                     No catalogue item matches this search.
+                                   </div>
+                                 )}
+                                 <button
+                                   type="button"
+                                   onMouseDown={(event) => event.preventDefault()}
+                                   onClick={() => {
+                                     setOpenBulkCatalogueIndex(null)
+                                   }}
+                                   className="mt-1 flex w-full items-center gap-2 rounded-lg border-t border-clinic-line px-3 py-2.5 text-left text-sm font-semibold text-clinic-teal hover:bg-clinic-paper"
+                                 >
+                                   <Plus size={16} />
+                                   Add new inventory item
+                                 </button>
+                               </div>
+                              )}
+                            </div>
+                          {(() => {
+                            const normalizedName = normalizeText(row.name)
+                            const existingItem = normalizedName
+                              ? activeItems.find((item) => normalizeText(item.name) === normalizedName)
+                              : undefined
+                            const duplicateInBatch = normalizedName
+                              ? bulkItems.some((otherRow, otherIndex) => otherIndex !== index && normalizeText(otherRow.name) === normalizedName)
+                              : false
+
+                            if (duplicateInBatch) {
+                              return (
+                                <p className="mt-1.5 text-xs font-medium text-amber-700">
+                                  This item is already selected in another row. Each inventory item can be added only once per batch.
+                                </p>
+                              )
+                            }
+
+                            if (existingItem) {
+                              return (
+                                <p className="mt-1.5 text-xs font-medium text-clinic-teal">
+                                  ✓ Existing catalogue item selected. Its stock will be added to the existing inventory record.
+                                </p>
+                              )
+                            }
+
+                            return (
+                              <p className="mt-1.5 text-xs text-clinic-ink/45">Search the existing catalogue or enter a new item.</p>
+                            )
+                          })()}
+                        </Field>
+                        <Field label="Category">
+                          <input type="text" list="inventory-categories" value={row.category} onChange={(event) => updateBulkRow(index, { category: event.target.value })} placeholder="e.g. Filling Materials (optional)" className="input-field" maxLength={80} />
+                        </Field>
+                        <Field label="Opening stock">
+                          <input type="text" inputMode="decimal" value={row.quantity} onChange={(event) => updateBulkRow(index, { quantity: sanitizeQuantityInput(event.target.value) })} placeholder="0" className="input-field" />
+                        </Field>
+                        <Field label="Unit">
+                          <select value={row.unit} onChange={(event) => updateBulkRow(index, { unit: event.target.value })} className="input-field">
+                            {UNITS.map((unit) => <option key={unit} value={unit}>{unit.charAt(0).toUpperCase() + unit.slice(1)}</option>)}
+                          </select>
+                        </Field>
+                        <Field label="Minimum stock">
+                          <input type="text" inputMode="decimal" value={row.minimumStock} onChange={(event) => updateBulkRow(index, { minimumStock: sanitizeQuantityInput(event.target.value) })} placeholder="0" className="input-field" />
+                        </Field>
+                        <Field label="Supplier">
+                          <input type="text" value={row.supplier} onChange={(event) => updateBulkRow(index, { supplier: event.target.value })} placeholder="Supplier name" className="input-field" maxLength={120} />
+                        </Field>
+                        <Field label="Expiry date">
+                          <input type="date" value={row.expiryDate} onChange={(event) => updateBulkRow(index, { expiryDate: event.target.value })} className="input-field" />
+                        </Field>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+
+                <button type="button" onClick={addBulkRow} className="inline-flex items-center gap-2 rounded-xl border border-clinic-line px-4 py-2.5 text-sm font-semibold text-clinic-teal hover:bg-clinic-paper"><Plus size={17} />Add another item</button>
+
+                <Field label="Total purchase amount (₹)">
+                  <input type="text" inputMode="decimal" value={bulkTotalCost} onChange={(event) => setBulkTotalCost(sanitizePriceInput(event.target.value))} placeholder="0.00" className="input-field" />
+                  <p className="mt-1.5 text-xs text-clinic-ink/45">One total amount for the complete batch. It is converted to a per-unit cost for inventory valuation.</p>
+                </Field>
+              </>
+            ) : (
             <div className="grid gap-4 sm:grid-cols-2">
               <Field label="Item name" required>
-                <input
-                  type="text"
-                  value={form.name}
-                  onChange={(event) =>
-                    setForm((current) => ({
-                      ...current,
-                      name: event.target.value,
-                    }))
-                  }
-                  placeholder="e.g. Composite Resin"
-                  className="input-field"
-                  maxLength={100}
-                  required
-                  autoFocus
-                />
+                <div className="relative">
+                  <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-clinic-ink/35" />
+                  <input
+                    type="text"
+                    value={form.name}
+                    onFocus={() => setShowItemNameSuggestions(true)}
+                    onBlur={() => window.setTimeout(() => setShowItemNameSuggestions(false), 150)}
+                    onChange={(event) => {
+                      setItemNameSearch(event.target.value)
+                      setForm((current) => ({
+                        ...current,
+                        name: event.target.value,
+                      }))
+                      setShowItemNameSuggestions(true)
+                    }}
+                    placeholder="Search existing items or enter a new item"
+                    className="input-field !pl-11 !pr-4"
+                    maxLength={100}
+                    required
+                    autoFocus
+                    autoComplete="off"
+                  />                   {showItemNameSuggestions && (
+                     <div className="absolute left-0 right-0 top-full z-50 mt-1 max-h-72 overflow-y-auto rounded-xl border border-clinic-line bg-white p-1.5 shadow-lg">
+                       {inventoryCatalogue
+                         .filter((item) =>
+                           !itemNameSearch.trim() ||
+                           normalizeText(item.name).includes(normalizeText(itemNameSearch)),
+                         )
+                         .map((item) => (
+                           <button
+                             key={item.id}
+                             type="button"
+                             onMouseDown={(event) => event.preventDefault()}
+                             onClick={() => selectCatalogueItem(item.name)}
+                             className="flex w-full items-center justify-between rounded-lg px-3 py-2.5 text-left text-sm hover:bg-clinic-paper"
+                           >
+                             <span className="font-medium text-clinic-ink">{item.name}</span>
+                             {activeItems.some((active) => normalizeText(active.name) === normalizeText(item.name)) && (
+                               <span className="ml-3 shrink-0 text-xs text-clinic-ink/45">In stock list</span>
+                             )}
+                           </button>
+                         ))}
+                       {inventoryCatalogue.filter((item) =>
+                         !itemNameSearch.trim() ||
+                         normalizeText(item.name).includes(normalizeText(itemNameSearch)),
+                       ).length === 0 && (
+                         <div className="px-3 py-3 text-sm text-clinic-ink/50">
+                           No catalogue item matches this search.
+                         </div>
+                       )}
+                       <button
+                         type="button"
+                         onMouseDown={(event) => event.preventDefault()}
+                         onClick={() => setShowItemNameSuggestions(false)}
+                         className="mt-1 flex w-full items-center gap-2 rounded-lg border-t border-clinic-line px-3 py-2.5 text-left text-sm font-semibold text-clinic-teal hover:bg-clinic-paper"
+                       >
+                         <Plus size={16} />
+                         Add new inventory item
+                       </button>
+                     </div>
+                   )}
+                 </div>
+                 {showItemNameSuggestions && itemNameSearch && activeItems.some((item) => normalizeText(item.name).includes(normalizeText(itemNameSearch))) && (
+                  <p className="mt-1.5 text-xs text-clinic-ink/45">Select a pre-loaded inventory name above, or choose “Add new inventory item” to enter a new material. Existing stock records are reused instead of duplicated.</p>
+                )}
               </Field>
 
-              <Field label="Category" required>
+              <Field label="Category">
                 <input
                   type="text"
                   list="inventory-categories"
@@ -1536,10 +2311,9 @@ export function InventoryPage() {
                       category: event.target.value,
                     }))
                   }
-                  placeholder="e.g. Filling Materials"
+                  placeholder="e.g. Filling Materials (optional)"
                   className="input-field"
                   maxLength={80}
-                  required
                 />
 
                 <datalist id="inventory-categories">
@@ -1679,7 +2453,9 @@ export function InventoryPage() {
                 />
               </Field>
             </div>
+            )}
 
+            {!bulkMode && (
             <div className="rounded-xl border border-clinic-line bg-clinic-paper p-4 text-sm text-clinic-ink/60">
               <strong className="text-clinic-ink">
                 Stock control:
@@ -1687,10 +2463,11 @@ export function InventoryPage() {
               quantity changes are recorded separately so we can maintain a
               reliable stock history.
             </div>
+            )}
 
             <ModalActions
               onCancel={closeForm}
-              submitLabel={editingItem ? 'Save changes' : 'Add item'}
+              submitLabel={editingItem ? 'Save changes' : bulkMode ? 'Add items' : 'Add item'}
             />
           </form>
         </Modal>
@@ -1833,6 +2610,117 @@ export function InventoryPage() {
                     : 'Save adjustment'
               }
             />
+          </form>
+        </Modal>
+      )}
+
+      {/* Treatment usage rules modal */}
+      {showUsageRules && (
+        <Modal
+          title="Treatment inventory usage"
+          description="Set the average inventory consumption recorded automatically when a treatment enters active care. These are clinic accounting defaults and can be changed at any time."
+          onClose={() => setShowUsageRules(false)}
+          maxWidth="max-w-4xl"
+        >
+          <form
+            onSubmit={(event) => {
+              event.preventDefault()
+              saveUsageRules()
+            }}
+            className="space-y-5"
+          >
+            <Field label="Treatment" required>
+              <select value={selectedTreatmentForRules} onChange={(event) => setSelectedTreatmentForRules(event.target.value)} className="input-field">
+                {treatmentCatalogue.map((treatment) => <option key={treatment.id} value={treatment.name}>{treatment.name}</option>)}
+              </select>
+            </Field>
+
+            <div className="rounded-xl border border-clinic-teal/20 bg-clinic-teal/5 p-4 text-sm text-clinic-ink/65">
+              Inventory is linked by item ID, so renaming an inventory item will not break its treatment rule.
+            </div>
+
+            {ruleDraft.length === 0 ? (
+              <div className="rounded-xl border border-dashed border-clinic-line px-5 py-8 text-center">
+                <p className="font-semibold text-clinic-ink">No usage rule configured</p>
+                <p className="mt-1 text-sm text-clinic-ink/50">Add the materials normally consumed for this treatment.</p>
+              </div>
+            ) : (
+              <div className="space-y-3">
+                {ruleDraft.map((rule, index) => {
+                  const selectedItem = items.find((item) => item.id === rule.inventoryItemId)
+                  const searchTerm = normalizeText(ruleSearch[rule.id] || '')
+                  const matchingItems = activeItems.filter((item) => {
+                    if (!searchTerm) return true
+                    return (
+                      normalizeText(item.name).includes(searchTerm) ||
+                      normalizeText(item.category).includes(searchTerm) ||
+                      normalizeText(item.unit).includes(searchTerm)
+                    )
+                  })
+                  return (
+                    <div key={rule.id} className="grid gap-3 rounded-xl border border-clinic-line bg-clinic-paper/50 p-4 sm:grid-cols-[1fr_150px_auto]">
+                      <Field label={index === 0 ? 'Inventory material' : ''} required>
+                        <div className="flex gap-2">
+                          <div className="relative min-w-0 flex-1">
+                            <Search size={16} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-clinic-ink/35" />
+                            <input
+                              type="text"
+                              value={ruleSearch[rule.id] ?? (selectedItem?.name || '')}
+                              onChange={(event) => setRuleSearch((current) => ({ ...current, [rule.id]: event.target.value }))}
+                              placeholder="Search inventory items..."
+                              className="input-field !pl-11 !pr-10"
+                              list={`inventory-rule-items-${rule.id}`}
+                            />
+                            <datalist id={`inventory-rule-items-${rule.id}`}>
+                              {matchingItems.map((item) => (
+                                <option key={item.id} value={item.name}>{item.category} · {item.unit}</option>
+                              ))}
+                            </datalist>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => openAddInventoryItemForRule(rule.id)}
+                            className="inline-flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-clinic-line bg-white text-clinic-teal hover:bg-clinic-paper"
+                            title="Add a new inventory item"
+                            aria-label="Add a new inventory item"
+                          >
+                            <Plus size={18} />
+                          </button>
+                        </div>
+                        <select
+                          value={rule.inventoryItemId}
+                          onChange={(event) => {
+                            const item = items.find((entry) => entry.id === event.target.value)
+                            updateRule(rule.id, { inventoryItemId: event.target.value, itemName: item?.name || '', aliases: item ? [item.name] : [] })
+                            setRuleSearch((current) => ({ ...current, [rule.id]: item?.name || '' }))
+                          }}
+                          className="input-field mt-2"
+                        >
+                          <option value="">Select inventory item</option>
+                          {matchingItems.map((item) => (
+                            <option key={item.id} value={item.id}>{item.name} · {item.unit}</option>
+                          ))}
+                        </select>
+                        {!selectedItem && rule.itemName && <p className="mt-1.5 text-xs text-amber-700">Previously linked to “{rule.itemName}”; choose an active inventory item.</p>}
+                        {selectedItem && <p className="mt-1.5 text-xs text-clinic-ink/45">Selected: {selectedItem.name} · {selectedItem.unit}</p>}
+                      </Field>
+                      <Field label={index === 0 ? 'Average usage' : ''} required>
+                        <input type="number" min="0.001" step="0.001" value={rule.quantity} onChange={(event) => updateRule(rule.id, { quantity: Number(event.target.value) })} className="input-field" />
+                        <p className="mt-1.5 text-xs text-clinic-ink/45">{selectedItem?.unit || 'unit'}</p>
+                      </Field>
+                      <div className="flex items-end">
+                        <button type="button" onClick={() => removeRule(rule.id)} className="inline-flex h-11 items-center gap-1.5 rounded-xl px-3 text-sm font-semibold text-red-600 hover:bg-red-50" aria-label={`Remove material ${index + 1}`}><Trash2 size={16} />Remove</button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+
+            <button type="button" onClick={addRuleRow} disabled={activeItems.length === 0} className="inline-flex items-center gap-2 rounded-xl border border-clinic-line px-4 py-2.5 text-sm font-semibold text-clinic-ink/70 hover:bg-clinic-paper disabled:cursor-not-allowed disabled:opacity-40"><Plus size={17} />Add material</button>
+            {activeItems.length === 0 && <p className="text-xs text-amber-700">Add inventory items first, then return here to link them to treatments.</p>}
+
+            <ModalActions onCancel={() => setShowUsageRules(false)} submitLabel="Save usage rules" />
           </form>
         </Modal>
       )}

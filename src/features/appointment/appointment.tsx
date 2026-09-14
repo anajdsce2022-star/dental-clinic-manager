@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useMemo, useState } from 'react'
 import { CalendarDays, CalendarClock, Clock, Search, X } from 'lucide-react'
-import { useSearchParams } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { getWhatsAppUrl } from '../../lib/whatsapp'
 
 type AppointmentStatus =
@@ -34,8 +34,10 @@ type Appointment = {
 
 type Patient = {
   id: string
+  patientNumber?: string
   name: string
   phone: string
+  email?: string
 }
 
 const PATIENTS_STORAGE_KEY = 'joshi-dental-clinic-patients'
@@ -83,7 +85,7 @@ function isSafeInteger(value: unknown, minimum: number, maximum: number): value 
 const emptyAppointment = {
   patientId: '',
   date: getLocalDateString(),
-  time: '09:00',
+  time: '',
   reason: '',
   status: 'Scheduled' as AppointmentStatus,
   notes: '',
@@ -130,6 +132,11 @@ function formatDate(date: string) {
 
 function getToday() {
   return getLocalDateString()
+}
+
+function getCurrentTimeMinutes() {
+  const now = new Date()
+  return now.getHours() * 60 + now.getMinutes()
 }
 
 function isSunday(date: string) {
@@ -226,6 +233,59 @@ function getDaySlots(
   })
 }
 
+function getSundaySlots(
+  date: string,
+  appointments: Appointment[],
+  editingId: string | null,
+): AppointmentSlot[] {
+  const editingAppointment = editingId
+    ? appointments.find((appointment) => appointment.id === editingId)
+    : null
+
+  const ownSlotValue =
+    editingAppointment && editingAppointment.date === date
+      ? editingAppointment.time
+      : null
+
+  const occupiedTimes = new Set(
+    appointments
+      .filter(
+        (appointment) =>
+          appointment.id !== editingId &&
+          appointment.date === date &&
+          occupiesTimeSlot(appointment.status),
+      )
+      .map((appointment) => appointment.time),
+  )
+
+  // A rescheduled appointment must also reserve its new slot.
+  appointments.forEach((appointment) => {
+    if (appointment.id === editingId) return
+    if (appointment.rescheduleDate !== date || !appointment.rescheduleTime) return
+    occupiedTimes.add(appointment.rescheduleTime)
+  })
+
+  const isToday = date === getToday()
+  const nowMinutes = isToday ? getCurrentTimeMinutes() : -1
+
+  return getScheduleSlots(0, 24 * 60).map((slot) => {
+    if (slot.value === ownSlotValue) {
+      return { ...slot, available: true }
+    }
+
+    const [hour, minute] = slot.value.split(':').map(Number)
+    const slotMinutes = hour * 60 + minute
+
+    // The current and every earlier slot is unavailable on today's Sunday.
+    const isPastOrCurrent = isToday && slotMinutes <= nowMinutes
+
+    return {
+      ...slot,
+      available: !isPastOrCurrent && !occupiedTimes.has(slot.value),
+    }
+  })
+}
+
 function SlotGroup({
   label,
   slots,
@@ -316,6 +376,25 @@ function loadPatients(): Patient[] {
   } catch {
     return []
   }
+}
+
+function generatePatientNumber(patients: Patient[], appointmentDate: string) {
+  const [year, month, day] = appointmentDate.split('-')
+  const datePrefix = `${day}${month}${year}`
+
+  const serials = patients
+    .map((patient) => (patient as Patient & { patientNumber?: string }).patientNumber)
+    .filter(
+      (patientNumber): patientNumber is string =>
+        typeof patientNumber === 'string' &&
+        patientNumber.startsWith(`P${datePrefix}-`),
+    )
+    .map((patientNumber) => Number(patientNumber.slice(`P${datePrefix}-`.length)))
+    .filter((serial) => Number.isInteger(serial) && serial > 0)
+
+  const nextSerial = serials.length > 0 ? Math.max(...serials) + 1 : 1
+
+  return `P${datePrefix}-${String(nextSerial).padStart(2, '0')}`
 }
 
 function loadAppointments(): Appointment[] {
@@ -412,8 +491,9 @@ function loadAppointments(): Appointment[] {
 }
 
 export function AppointmentsPage() {
+  const navigate = useNavigate()
   const [searchParams] = useSearchParams()
-  const [patients] = useState<Patient[]>(loadPatients)
+  const [patients, setPatients] = useState<Patient[]>(loadPatients)
   const [appointments, setAppointments] = useState<Appointment[]>(loadAppointments)
   const [patientSearch, setPatientSearch] = useState(() => {
     const patientId = searchParams.get('patientId')
@@ -466,6 +546,10 @@ export function AppointmentsPage() {
   const selectedDateIsSunday = isSunday(form.date)
   const daySlots = useMemo(
     () => getDaySlots(form.date, appointments, editingId),
+    [appointments, editingId, form.date],
+  )
+  const sundaySlots = useMemo(
+    () => getSundaySlots(form.date, appointments, editingId),
     [appointments, editingId, form.date],
   )
   const availableMorningSlots = daySlots.filter((slot) => slot.value < '15:00')
@@ -528,7 +612,9 @@ export function AppointmentsPage() {
     setForm({
       ...emptyAppointment,
       date,
-      time: slots[0]?.value || '',
+      time: isSunday(date)
+        ? getSundaySlots(date, appointments, null).find((slot) => slot.available)?.value || ''
+        : slots[0]?.value || '',
     })
     setFormError('')
     setShowForm(true)
@@ -540,7 +626,9 @@ export function AppointmentsPage() {
     setForm({
       ...form,
       date,
-      time: isSunday(date) ? '' : slots[0]?.value || '',
+      time: isSunday(date)
+        ? getSundaySlots(date, appointments, editingId).find((slot) => slot.available)?.value || ''
+        : slots[0]?.value || '',
     })
   }
 
@@ -651,12 +739,30 @@ export function AppointmentsPage() {
       return
     }
 
-    if (
-      !selectedDateIsSunday &&
+    if (selectedDateIsSunday) {
+      if (
+        !sundaySlots.some(
+          (slot) => slot.value === form.time && slot.available,
+        )
+      ) {
+        setFormError('Please choose an available Sunday appointment slot.')
+        return
+      }
+    } else if (
       !daySlots.some((slot) => slot.value === form.time && slot.available)
     ) {
       setFormError('Please choose an available appointment slot.')
       return
+    }
+
+    if (selectedDateIsSunday && form.date === getToday()) {
+      const [hour, minute] = form.time.split(':').map(Number)
+      const selectedMinutes = hour * 60 + minute
+
+      if (selectedMinutes <= getCurrentTimeMinutes()) {
+        setFormError('An urgent Sunday appointment must use a future time today.')
+        return
+      }
     }
 
     const timeSlotOccupied = appointments.some(
@@ -679,6 +785,39 @@ export function AppointmentsPage() {
     if (!patient) {
       setFormError('The selected patient could not be found.')
       return
+    }
+
+    // One active appointment per patient per date. Different symptoms
+    // should be added to the same visit rather than creating two slots.
+    const patientAlreadyHasAppointment = appointments.find(
+      (appointment) =>
+        appointment.id !== editingId &&
+        appointment.patientId === patient.id &&
+        appointment.date === form.date &&
+        occupiesTimeSlot(appointment.status),
+    )
+
+    if (patientAlreadyHasAppointment) {
+      setFormError(
+        `This patient already has an appointment on ${formatDate(form.date)} at ${patientAlreadyHasAppointment.time}. Add the additional concern to that appointment instead.`,
+      )
+      return
+    }
+
+    const patientNumber =
+      patient.patientNumber || generatePatientNumber(patients, form.date)
+
+    const updatedPatients = patient.patientNumber
+      ? patients
+      : patients.map((currentPatient) =>
+          currentPatient.id === patient.id
+            ? { ...currentPatient, patientNumber }
+            : currentPatient,
+        )
+
+    if (!patient.patientNumber) {
+      setPatients(updatedPatients)
+      localStorage.setItem(PATIENTS_STORAGE_KEY, JSON.stringify(updatedPatients))
     }
 
     const appointment: Appointment = {
@@ -1415,7 +1554,7 @@ export function AppointmentsPage() {
               <a
                 href={getWhatsAppUrl(
                   patients.find((patient) => patient.id === preponingAppointment.patientId)?.phone || '',
-                  `Joshi Dental Clinic: Would an earlier appointment be convenient for you? Your current booking is ${formatDate(preponingAppointment.date)} at ${preponingAppointment.time}. Please call 7090763509 if you are ready to reschedule. Booking ID: ${preponingAppointment.id}.`,
+                  `Joshi Dental Clinic: Would an earlier appointment be convenient for you? Your current booking is ${formatDate(preponingAppointment.date)} at ${preponingAppointment.time}. Please call 7090763509 if you are ready to reschedule. Patient ID: ${patients.find((patient) => patient.id === preponingAppointment.patientId)?.patientNumber || '—'}.`,
                 ) || '#'}
                 target="_blank"
                 rel="noreferrer"
@@ -1449,8 +1588,8 @@ export function AppointmentsPage() {
 
             <div className="mt-5 space-y-2 rounded-xl bg-clinic-paper p-4 text-sm">
               <div className="flex justify-between gap-4">
-                <span className="text-clinic-ink/55">Booking ID</span>
-                <strong className="font-mono text-clinic-teal">{confirmation.appointment.id}</strong>
+                <span className="text-clinic-ink/55">Patient ID</span>
+                <strong className="font-mono text-clinic-teal">{patients.find((patient) => patient.id === confirmation.appointment.patientId)?.patientNumber || '—'}</strong>
               </div>
               <div className="flex justify-between gap-4">
                 <span className="text-clinic-ink/55">Patient</span>
@@ -1463,11 +1602,25 @@ export function AppointmentsPage() {
             </div>
 
             <div className="mt-5 flex flex-col gap-3 sm:flex-row sm:justify-end">
+              {confirmation.kind === 'booked' && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const patientId = confirmation.appointment.patientId
+                    setConfirmation(null)
+                    navigate(`/treatments?patientId=${patientId}`)
+                  }}
+                  className="rounded-xl bg-clinic-teal px-4 py-3 text-center text-sm font-semibold text-white hover:bg-clinic-teal/90"
+                >
+                  Add Treatment
+                </button>
+              )}
+
               {confirmation.patientPhone && (
                 <a
                   href={getWhatsAppUrl(
                     confirmation.patientPhone,
-                    `Joshi Dental Clinic: Your appointment is ${confirmation.kind}. Booking ID: ${confirmation.appointment.id}. Date: ${formatDate(confirmation.appointment.date)} at ${confirmation.appointment.time}.`,
+                    `Joshi Dental Clinic: Your appointment is ${confirmation.kind}. Patient ID: ${patients.find((patient) => patient.id === confirmation.appointment.patientId)?.patientNumber || '—'}. Date: ${formatDate(confirmation.appointment.date)} at ${confirmation.appointment.time}.`,
                   ) || '#'}
                   target="_blank"
                   rel="noreferrer"
@@ -1815,49 +1968,51 @@ export function AppointmentsPage() {
 
                   {selectedDateIsSunday ? (
                     <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 p-4">
-                      <p className="text-sm font-semibold text-amber-900">
-                        Urgent care only
-                      </p>
-                      <p className="mt-1 text-xs text-amber-800">
-                        Regular appointments are unavailable on Sunday. For urgent dental treatment, a flexible time can be arranged.
-                      </p>
+                      <div className="flex items-start gap-3">
+                        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white text-amber-700 shadow-sm">
+                          <Clock aria-hidden="true" className="h-5 w-5" />
+                        </div>
 
-                      <div className="mt-4 grid gap-4 sm:grid-cols-2">
                         <div>
-                          <label
-                            htmlFor="appointment-form-time"
-                            className="mb-1.5 block text-sm font-semibold text-amber-900"
-                          >
-                            Approximate time <span className="text-clinic-clay">*</span>
-                          </label>
-                          <input
-                            id="appointment-form-time"
-                            type="time"
-                            value={form.time}
-                            onChange={(event) =>
-                              setForm({ ...form, time: event.target.value })
-                            }
-                            className="w-full rounded-xl border border-amber-300 bg-white px-3 py-3 text-sm outline-none focus:border-clinic-teal focus:ring-4 focus:ring-clinic-teal/10"
-                          />
+                          <p className="text-sm font-semibold text-amber-900">
+                            Sunday urgent-care slots
+                          </p>
+                          <p className="mt-1 text-xs leading-5 text-amber-800">
+                            Regular appointments are unavailable on Sunday. Select a 30-minute urgent-care slot below.
+                            {form.date === getToday()
+                              ? ' Current and earlier times are blocked.'
+                              : ' Future slots are available throughout the day.'}
+                          </p>
                         </div>
-                        <div>
-                          <label
-                            htmlFor="appointment-urgent-reason"
-                            className="mb-1.5 block text-sm font-semibold text-amber-900"
-                          >
-                            Urgency reason <span className="text-clinic-clay">*</span>
-                          </label>
-                          <input
-                            id="appointment-urgent-reason"
-                            type="text"
-                            value={form.reason}
-                            onChange={(event) =>
-                              setForm({ ...form, reason: event.target.value })
-                            }
-                            placeholder="e.g. Severe tooth pain or swelling"
-                            className="w-full rounded-xl border border-amber-300 bg-white px-3 py-3 text-sm text-amber-900 outline-none placeholder:text-amber-700/50 focus:border-clinic-teal focus:ring-4 focus:ring-clinic-teal/10"
-                          />
-                        </div>
+                      </div>
+
+                      <div className="mt-4 rounded-xl border border-amber-200/80 bg-white/70 p-3">
+                        <SlotGroup
+                          label="Sunday · 12:00 AM - 11:30 PM"
+                          slots={sundaySlots}
+                          selectedTime={form.time}
+                          onSelect={(time) => setForm({ ...form, time })}
+                        />
+                      </div>
+
+                      <div className="mt-4">
+                        <label
+                          htmlFor="appointment-urgent-reason"
+                          className="mb-1.5 block text-sm font-semibold text-amber-900"
+                        >
+                          Urgency reason <span className="text-clinic-clay">*</span>
+                        </label>
+                        <input
+                          id="appointment-urgent-reason"
+                          type="text"
+                          value={form.reason}
+                          onChange={(event) =>
+                            setForm({ ...form, reason: event.target.value })
+                          }
+                          placeholder="e.g. Severe tooth pain or swelling"
+                          maxLength={500}
+                          className="w-full rounded-xl border border-amber-300 bg-white px-3 py-3 text-sm text-amber-900 outline-none placeholder:text-amber-700/50 focus:border-clinic-teal focus:ring-4 focus:ring-clinic-teal/10"
+                        />
                       </div>
                     </div>
                   ) : (

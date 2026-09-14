@@ -1,10 +1,14 @@
-import { cloneElement, isValidElement, useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
+import { useSearchParams } from 'react-router-dom'
 import type { FormEvent } from 'react'
 import { jsPDF } from 'jspdf'
+import { getWhatsAppUrl } from '../../lib/whatsapp'
 
 type Patient = {
   id: string
+  patientNumber?: string
   name: string
+  phone?: string
 }
 
 type Treatment = {
@@ -42,6 +46,7 @@ type PaymentMethod =
 
 type InvoiceItem = {
   id: string
+  treatmentId?: string
   description: string
   quantity: number
   amount: number
@@ -51,6 +56,7 @@ type Invoice = {
   id: string
   invoiceNumber: string
   patientId: string
+  patientNumber?: string
   patientName: string
   date: string
   items: InvoiceItem[]
@@ -152,6 +158,7 @@ function isValidInvoiceItem(value: unknown): value is InvoiceItem {
   const item = value as Partial<InvoiceItem>
   return (
     isNonEmptyString(item.id, 100) &&
+    (item.treatmentId === undefined || isNonEmptyString(item.treatmentId, 100)) &&
     isNonEmptyString(item.description, MAX_DESCRIPTION_LENGTH) &&
     isSafeInteger(item.quantity, 1, MAX_QUANTITY) &&
     isSafeMoney(item.amount)
@@ -166,6 +173,7 @@ function isValidInvoice(value: unknown): value is Invoice {
     !isNonEmptyString(invoice.invoiceNumber, 100) ||
     !isNonEmptyString(invoice.patientId, 100) ||
     !isNonEmptyString(invoice.patientName, 500) ||
+    (invoice.patientNumber !== undefined && !isNonEmptyString(invoice.patientNumber, 100)) ||
     !isValidDateString(invoice.date) ||
     !Array.isArray(invoice.items) ||
     invoice.items.length === 0 ||
@@ -205,7 +213,12 @@ function loadPatients(): Patient[] {
         seen.add(item.id)
         return true
       })
-      .map((patient) => ({ id: patient.id, name: patient.name.trim() }))
+      .map((patient) => ({
+        id: patient.id,
+        patientNumber: typeof patient.patientNumber === 'string' ? patient.patientNumber : undefined,
+        name: patient.name.trim(),
+        phone: typeof patient.phone === 'string' ? patient.phone : undefined,
+      }))
   } catch {
     return []
   }
@@ -235,7 +248,11 @@ function loadTreatments(): Treatment[] {
         isSafeInteger(item.plannedVisits, 1, 1000) &&
         isSafeInteger(item.completedVisits, 0, item.plannedVisits) &&
         (item.diagnosis === undefined || (typeof item.diagnosis === 'string' && item.diagnosis.length <= 1000)) &&
-        (item.nextVisit === undefined || isValidDateString(item.nextVisit))
+        (
+          item.nextVisit === undefined ||
+          item.nextVisit === '' ||
+          isValidDateString(item.nextVisit)
+        )
       if (valid) seen.add(item.id!)
       return valid
     })
@@ -452,6 +469,7 @@ function escapeHtml(value: string): string {
 }
 
 export function BillingPage() {
+  const [searchParams, setSearchParams] = useSearchParams()
   const [patients, setPatients] = useState<Patient[]>(
     loadPatients,
   )
@@ -487,6 +505,74 @@ export function BillingPage() {
       window.removeEventListener('storage', refreshData)
     }
   }, [])
+
+  useEffect(() => {
+    const patientIdParam = searchParams.get('patientId')
+    const treatmentId = searchParams.get('treatmentId')
+
+    // Billing can be opened from Patients with only patientId, or from
+    // Treatments with both patientId and treatmentId.
+    if (!patientIdParam && !treatmentId) return
+
+    // IMPORTANT:
+    // When Treatment navigates to Billing in the same browser tab, React's
+    // Billing state can still contain the older treatments array. A browser
+    // "storage" event is NOT fired in the same document that changed
+    // localStorage. Therefore, read localStorage directly here and use that
+    // fresh snapshot for the deep-link lookup.
+    const freshPatients = loadPatients()
+    const freshTreatments = loadTreatments()
+
+    setPatients(freshPatients)
+    setTreatments(freshTreatments)
+
+    const treatment = treatmentId
+      ? freshTreatments.find(
+          (item) =>
+            item.id === treatmentId &&
+            item.status !== 'Cancelled',
+        )
+      : undefined
+
+    if (treatmentId && !treatment) {
+      setFormError(
+        'The selected treatment could not be loaded into Billing. Please choose the treatment manually.',
+      )
+      setEditingInvoiceId(null)
+      setForm({
+        ...emptyForm,
+        patientId: patientIdParam ?? '',
+      })
+      setShowForm(true)
+      setSearchParams({}, { replace: true })
+      return
+    }
+
+    const patientId = treatment?.patientId ?? patientIdParam
+    if (!patientId) return
+
+    const patient = freshPatients.find((item) => item.id === patientId)
+    if (!patient) {
+      setFormError('The selected patient could not be loaded into Billing.')
+      setShowForm(true)
+      setSearchParams({}, { replace: true })
+      return
+    }
+
+    setEditingInvoiceId(null)
+    setForm({
+      ...emptyForm,
+      patientId: patient.id,
+      treatmentId: treatment?.id ?? '',
+      description: treatment?.treatmentName ?? '',
+      quantity: '1',
+      // Treatment cost is the starting amount, NOT a locked amount.
+      amount: treatment ? String(treatment.cost) : '0',
+    })
+    setFormError('')
+    setShowForm(true)
+    setSearchParams({}, { replace: true })
+  }, [searchParams, setSearchParams])
 
   useEffect(() => {
     localStorage.setItem(
@@ -581,8 +667,8 @@ export function BillingPage() {
 
     setForm({
       patientId: invoice.patientId,
-      treatmentId: '',
-      description: firstItem?.description ?? '',
+      treatmentId: firstItem?.treatmentId ?? '',
+      description: firstItem?.description ?? '', 
       quantity: String(firstItem?.quantity ?? 1),
       amount: String(firstItem?.amount ?? 0),
       discount: String(invoice.discount),
@@ -795,12 +881,14 @@ export function BillingPage() {
           return {
             ...invoice,
             patientId: patient.id,
+            patientNumber: patient.patientNumber,
             patientName: patient.name,
             items: [
               {
                 id:
                   invoice.items[0]?.id ??
                   crypto.randomUUID(),
+                treatmentId: form.treatmentId || invoice.items[0]?.treatmentId,
                 description: form.description.trim(),
                 quantity: quantityValue,
                 amount: amountValue,
@@ -827,11 +915,13 @@ export function BillingPage() {
       id: crypto.randomUUID(),
       invoiceNumber: getNextInvoiceNumber(invoices),
       patientId: patient.id,
+      patientNumber: patient.patientNumber,
       patientName: patient.name,
       date: getLocalDateString(),
       items: [
         {
           id: crypto.randomUUID(),
+          treatmentId: form.treatmentId || undefined,
           description: form.description.trim(),
           quantity: quantityValue,
           amount: amountValue,
@@ -866,6 +956,40 @@ export function BillingPage() {
     setInvoices((current) =>
       current.filter((invoice) => invoice.id !== id),
     )
+  }
+
+  function sendInvoiceWhatsApp(invoice: Invoice) {
+    const patient = patients.find((item) => item.id === invoice.patientId)
+
+    if (!patient?.phone) {
+      window.alert('This patient does not have a valid mobile number for WhatsApp.')
+      return
+    }
+
+    if (invoice.paymentStatus !== 'Paid' && invoice.paymentStatus !== 'Partially paid') {
+      window.alert('WhatsApp payment updates are available after a payment has been recorded.')
+      return
+    }
+
+    const amountPaid = invoice.amountPaid
+    const remaining = Math.max(0, invoice.total - amountPaid)
+    const status = invoice.paymentStatus === 'Paid' ? 'Fully paid' : 'Partially paid'
+
+    const message = [
+      'Payment update from Joshi Dental Clinic',
+      '',
+      `Invoice: ${invoice.invoiceNumber}`,
+      `Total invoice: ₹${invoice.total.toLocaleString('en-IN')}`,
+      `Amount paid: ₹${amountPaid.toLocaleString('en-IN')}`,
+      `Remaining amount: ₹${remaining.toLocaleString('en-IN')}`,
+      `Payment status: ${status}`,
+      `Mode of payment: ${invoice.paymentMethod ?? 'Not recorded'}`,
+      '',
+      'Thank you for choosing Joshi Dental Clinic.',
+    ].join('\n')
+
+    const url = getWhatsAppUrl(patient.phone, message)
+    if (url) window.open(url, '_blank', 'noopener,noreferrer')
   }
 
   function createBillPdf(invoice: Invoice) {
@@ -1848,6 +1972,16 @@ export function BillingPage() {
                             </button>
                           )}
 
+                          {(invoice.paymentStatus === 'Paid' || invoice.paymentStatus === 'Partially paid') && (
+                            <button
+                              type="button"
+                              onClick={() => sendInvoiceWhatsApp(invoice)}
+                              className="rounded-lg border border-clinic-teal/30 px-3 py-2 text-xs font-semibold text-clinic-teal hover:bg-clinic-paper"
+                            >
+                              WhatsApp
+                            </button>
+                          )}
+
                           <button
                             type="button"
                             onClick={() =>
@@ -1962,6 +2096,12 @@ export function BillingPage() {
 
               {!editingInvoiceId && (
                 <>
+                  {form.treatmentId && (
+                    <div className="rounded-xl border border-clinic-teal/20 bg-clinic-teal/5 px-4 py-3 text-sm text-clinic-ink/70">
+                      <strong>From Treatment:</strong> {form.description} · {formatCurrency(numberValue(form.amount))}
+                      <span className="ml-2 text-clinic-ink/50">The treatment cost has been transferred automatically.</span>
+                    </div>
+                  )}
                   <div className="grid gap-5 md:grid-cols-2">
                     <Field label="Patient" required>
                       <select
@@ -1982,7 +2122,7 @@ export function BillingPage() {
                             key={patient.id}
                             value={patient.id}
                           >
-                            {patient.name}
+                            {patient.name}{patient.patientNumber ? ` — ${patient.patientNumber}` : ''}
                           </option>
                         ))}
                       </select>
@@ -2069,7 +2209,7 @@ export function BillingPage() {
                       />
                     </Field>
 
-                    <Field label="Amount">
+                    <Field label="Amount (editable)">
                       <input
                         type="text"
                         inputMode="numeric"
@@ -2089,6 +2229,11 @@ export function BillingPage() {
                         maxLength={14}
                         className="input-field"
                       />
+                      {form.treatmentId && (
+                        <p className="mt-1 text-xs text-clinic-ink/45">
+                          Pre-filled from the treatment cost. You can edit this amount before creating the invoice.
+                        </p>
+                      )}
                     </Field>
 
                     <Field label="Discount">
@@ -2401,20 +2546,8 @@ function Field({
   required?: boolean
   children: React.ReactNode
 }) {
-  const fieldId = `billing-${label
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')}`
-
-  const fieldControl = isValidElement(children)
-    ? cloneElement(
-        children as React.ReactElement<{ id?: string }>,
-        { id: fieldId },
-      )
-    : children
-
   return (
-    <label htmlFor={fieldId} className="block">
+    <label className="block">
       <span className="mb-2 block text-sm font-medium text-clinic-ink">
         {label}
 
@@ -2425,7 +2558,7 @@ function Field({
         )}
       </span>
 
-      {fieldControl}
+      {children}
     </label>
   )
 }
